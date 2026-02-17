@@ -244,6 +244,28 @@ export const TraceTimeline: React.FC<TraceTimelineProps> = ({
   // Calculate timeline width based on panel width
   const timelineWidth = Math.max(200, width - 500);
 
+  // Build a map of spans for ancestor checks
+  const spanMap = useMemo(() => new Map(spansWithLogs.map((s) => [s.spanId, s])), [spansWithLogs]);
+
+  // Determine which spans should be visible based on expanded parents
+  const visibleSpans = useMemo(() => {
+    const visible: typeof spansWithLogs = [];
+
+    const isSpanVisible = (span: typeof spansWithLogs[0]): boolean => {
+      if (!span.parentSpanId) return true; // root-level spans always visible
+      const parent = spanMap.get(span.parentSpanId);
+      if (!parent) return true;
+      // parent must be visible and expanded
+      if (!isSpanVisible(parent)) return false;
+      return expandedSpans.has(parent.spanId);
+    };
+
+    for (const s of spansWithLogs) {
+      if (isSpanVisible(s)) visible.push(s);
+    }
+    return visible;
+  }, [spansWithLogs, spanMap, expandedSpans]);
+
   // Calculate time markers
   const timeMarkers = useMemo(() => {
     const markers = [];
@@ -315,7 +337,7 @@ export const TraceTimeline: React.FC<TraceTimelineProps> = ({
 
       {/* Spans list */}
       <div className={styles.spansContainer}>
-        {spansWithLogs.map((span) => (
+        {visibleSpans.map((span) => (
           <SpanRow
             key={span.spanId}
             span={span}
