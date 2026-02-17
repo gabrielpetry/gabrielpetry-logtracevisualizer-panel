@@ -1,12 +1,7 @@
 import { Icon, useStyles2, useTheme2 } from '@grafana/ui';
 import React, { useMemo } from 'react';
 import { css, cx } from '@emotion/css';
-import {
-  generateMockLogs,
-  generateMockTrace,
-  parseLogData,
-  parseTraceData,
-} from '../utils/traceUtils';
+import { parseLogData, parseTraceData } from '../utils/traceUtils';
 
 import { PanelProps } from '@grafana/data';
 import { SimpleOptions } from 'types';
@@ -52,21 +47,6 @@ const getStyles = () => {
       max-width: 400px;
       line-height: 1.5;
     `,
-    demoLabel: css`
-      position: absolute;
-      top: 8px;
-      right: 8px;
-      background: linear-gradient(135deg, #7B61FF 0%, #3D71D9 100%);
-      color: white;
-      padding: 4px 10px;
-      border-radius: 12px;
-      font-size: 10px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      z-index: 10;
-      box-shadow: 0 2px 8px rgba(123, 97, 255, 0.3);
-    `,
   };
 };
 
@@ -88,24 +68,12 @@ export const SimplePanel: React.FC<Props> = ({ options, data, width, height }) =
     console.log('SimplePanel: parsedTrace', parsedTrace ? 'found' : 'not found');
     console.log('SimplePanel: parsedLogs count:', parsedLogs.length);
 
-    // If we have real trace data, use it
-    if (parsedTrace) {
-      return {
-        trace: parsedTrace,
-        logs: parsedLogs,
-        isDemo: false,
-      };
-    }
-
-    // Otherwise, show demo data
-    const mockTrace = generateMockTrace();
-    const mockLogs = generateMockLogs(mockTrace);
+    // Return the parsed data (or null if no trace found)
     return {
-      trace: mockTrace,
-      logs: mockLogs,
-      isDemo: true,
+      trace: parsedTrace,
+      logs: parsedLogs,
     };
-  }, [data.series, options.lokiTraceIdField, options.lokiSpanIdField]);
+  }, [data.series, options.lokiTraceIdField, options.lokiSpanIdField, options.durationUnit]);
 
   // Show empty state if there's no data and no demo mode available
   if (!trace) {
@@ -122,11 +90,7 @@ export const SimplePanel: React.FC<Props> = ({ options, data, width, height }) =
   }
 
   return (
-    <div
-      className={styles.wrapper}
-      style={{ width, height }}
-    >
-      {isDemo && <div className={styles.demoLabel}>Demo Data</div>}
+    <div className={styles.wrapper} style={{ width, height }}>
       <TraceTimeline
         trace={trace}
         logs={logs}
