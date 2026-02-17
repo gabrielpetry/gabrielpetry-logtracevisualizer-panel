@@ -22,6 +22,40 @@ export const plugin = new PanelPlugin<SimpleOptions>(SimplePanel).setPanelOption
       description: 'Whether log panels should be collapsed initially',
       defaultValue: true,
     })
+    .addBooleanSwitch({
+      path: 'colorizeByLogLevel',
+      name: 'Colorize by log level',
+      description: 'Override span colors based on log severity (error, warning, info)',
+      defaultValue: false,
+    })
+    .addColorPicker({
+      path: 'errorColor',
+      name: 'Error color',
+      description: 'Color for spans with ERROR, CRITICAL, or EXCEPTION logs',
+      defaultValue: '#F2495C',
+      showIf: (config) => config.colorizeByLogLevel,
+    })
+    .addColorPicker({
+      path: 'warningColor',
+      name: 'Warning color',
+      description: 'Color for spans with WARNING or WARN logs',
+      defaultValue: '#FF9830',
+      showIf: (config) => config.colorizeByLogLevel,
+    })
+    .addColorPicker({
+      path: 'infoColor',
+      name: 'Info color',
+      description: 'Color for spans with INFO logs (no errors or warnings)',
+      defaultValue: '#73BF69',
+      showIf: (config) => config.colorizeByLogLevel,
+    })
+    .addColorPicker({
+      path: 'debugColor',
+      name: 'Debug color',
+      description: 'Color for spans with DEBUG logs only',
+      defaultValue: '#A352CC',
+      showIf: (config) => config.colorizeByLogLevel,
+    })
     .addTextInput({
       path: 'lokiTraceIdField',
       name: 'Loki trace ID field',
