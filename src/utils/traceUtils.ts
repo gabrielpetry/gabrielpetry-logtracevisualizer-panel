@@ -561,13 +561,33 @@ export function flattenSpans(span: Span | undefined): Span[] {
  * Format duration from microseconds to human readable
  */
 export function formatDuration(microseconds: number): string {
-  if (microseconds < 1000) {
-    return `${microseconds.toFixed(0)}µs`;
+  // Accept either microseconds or milliseconds by auto-detecting the magnitude.
+  if (!isFinite(microseconds) || microseconds <= 0) {
+    return '0µs';
   }
-  if (microseconds < 1000000) {
-    return `${(microseconds / 1000).toFixed(2)}ms`;
+
+  let micros = microseconds;
+
+  // Heuristics to determine unit:
+  // - If value looks like microseconds (>= 1e6), treat as µs
+  // - If value looks like milliseconds (>= 1e3 and < 1e6), treat as ms and convert to µs
+  // - Otherwise treat as µs
+  if (microseconds >= 1e6) {
+    micros = microseconds; // already µs
+  } else if (microseconds >= 1e3) {
+    // most likely milliseconds -> convert to µs
+    micros = microseconds * 1000;
+  } else {
+    micros = microseconds; // small values are µs
   }
-  return `${(microseconds / 1000000).toFixed(2)}s`;
+
+  if (micros < 1000) {
+    return `${micros.toFixed(0)}µs`;
+  }
+  if (micros < 1000000) {
+    return `${(micros / 1000).toFixed(2)}ms`;
+  }
+  return `${(micros / 1000000).toFixed(2)}s`;
 }
 
 /**
