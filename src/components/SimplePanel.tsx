@@ -132,7 +132,14 @@ export const SimplePanel: React.FC<Props> = ({ options, data, width, height }) =
         logs={logs}
         width={width}
         height={height}
+        showServiceColors={options.showServiceColors}
+        showDuration={options.showDuration}
         collapsedByDefault={options.collapsedByDefault}
+        colorizeByLogLevel={options.colorizeByLogLevel}
+        errorColor={options.errorColor}
+        warningColor={options.warningColor}
+        infoColor={options.infoColor}
+        debugColor={options.debugColor}
       />
     </div>
   );
