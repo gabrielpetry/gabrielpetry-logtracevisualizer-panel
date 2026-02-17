@@ -10,6 +10,7 @@ export interface SimpleOptions {
   debugColor: string;
   lokiTraceIdField: string;
   lokiSpanIdField: string;
+  durationUnit?: 'auto' | 'microseconds' | 'milliseconds' | 'seconds';
 }
 
 // Log severity levels for coloring

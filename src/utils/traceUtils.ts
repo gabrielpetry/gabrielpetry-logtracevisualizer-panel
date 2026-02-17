@@ -117,7 +117,10 @@ export function getColorBySeverity(
 /**
  * Parse trace data from Grafana DataFrames (Tempo format)
  */
-export function parseTraceData(frames: DataFrame[]): Trace | null {
+export function parseTraceData(
+  frames: DataFrame[],
+  durationUnit: 'auto' | 'microseconds' | 'milliseconds' | 'seconds' = 'auto'
+): Trace | null {
   // Find the trace frame
   const traceFrame = frames.find((frame) => {
     const hasTraceId = frame.fields.some(
@@ -164,6 +167,46 @@ export function parseTraceData(frames: DataFrame[]): Trace | null {
   const spans: Span[] = [];
   const length = traceFrame.length;
 
+  // Determine multiplier for duration unit. If 'auto', detect from sample values.
+  let durationMultiplier = 1;
+  let detectedUnit: string | null = null;
+  if (durationUnit === 'auto') {
+    try {
+      const samples: number[] = [];
+      for (let i = 0; i < Math.min(50, length); i++) {
+        const v = Number(durationField.values[i]);
+        if (isFinite(v) && v > 0) samples.push(v);
+      }
+      if (samples.length > 0) {
+        samples.sort((a, b) => a - b);
+        const mid = Math.floor(samples.length / 2);
+        const median = samples.length % 2 === 1 ? samples[mid] : (samples[mid - 1] + samples[mid]) / 2;
+        // Heuristics based on magnitude
+        if (median >= 1e9) {
+          detectedUnit = 'nanoseconds';
+          durationMultiplier = 1 / 1000; // ns -> µs
+        } else if (median >= 1e6) {
+          detectedUnit = 'microseconds';
+          durationMultiplier = 1; // µs
+        } else if (median >= 1e3) {
+          detectedUnit = 'milliseconds';
+          durationMultiplier = 1000; // ms -> µs
+        } else {
+          detectedUnit = 'seconds';
+          durationMultiplier = 1000000; // s -> µs
+        }
+        console.log('parseTraceData: auto-detected duration unit=', detectedUnit, 'median=', median);
+      }
+    } catch (e) {
+      // fallback
+      durationMultiplier = 1;
+    }
+  } else {
+    if (durationUnit === 'milliseconds') durationMultiplier = 1000;
+    if (durationUnit === 'seconds') durationMultiplier = 1000000;
+    detectedUnit = durationUnit;
+  }
+
   for (let i = 0; i < length; i++) {
     const tags: Record<string, string | number | boolean> = {};
 
@@ -185,10 +228,25 @@ export function parseTraceData(frames: DataFrame[]): Trace | null {
       parentSpanId: parentSpanIdField ? String(parentSpanIdField.values[i] || '') : undefined,
       operationName: operationNameField ? String(operationNameField.values[i] || 'unknown') : 'unknown',
       serviceName: serviceNameField ? String(serviceNameField.values[i] || 'unknown') : 'unknown',
-      startTime: Number(startTimeField.values[i]),
-      duration: Number(durationField.values[i]),
+      startTime: Number(startTimeField.values[i]) * durationMultiplier,
+      duration: Number(durationField.values[i]) * durationMultiplier,
       tags,
     });
+  }
+
+  // Debug: log sample raw and converted durations to help diagnose unit issues
+  try {
+    const sampleCount = Math.min(5, spans.length);
+    const rawSamples: number[] = [];
+    const convertedSamples: number[] = [];
+    for (let i = 0; i < sampleCount; i++) {
+      rawSamples.push(Number(durationField.values[i]));
+      convertedSamples.push(Number(durationField.values[i]) * durationMultiplier);
+    }
+    console.log('parseTraceData: durationUnit=', durationUnit, 'multiplier=', durationMultiplier);
+    console.log('parseTraceData: raw durations sample=', rawSamples, 'converted (µs)=', convertedSamples);
+  } catch (e) {
+    // ignore logging errors
   }
 
   if (spans.length === 0) {

@@ -56,6 +56,20 @@ export const plugin = new PanelPlugin<SimpleOptions>(SimplePanel).setPanelOption
       defaultValue: '#A352CC',
       showIf: (config) => config.colorizeByLogLevel,
     })
+    .addRadio({
+      path: 'durationUnit',
+      name: 'Duration unit',
+      description: 'Unit of the duration field in your trace data (or Auto-detect)',
+      defaultValue: 'auto',
+      settings: {
+        options: [
+          { value: 'auto', label: 'Auto-detect' },
+          { value: 'microseconds', label: 'Microseconds (µs)' },
+          { value: 'milliseconds', label: 'Milliseconds (ms)' },
+          { value: 'seconds', label: 'Seconds (s)' },
+        ],
+      },
+    })
     .addTextInput({
       path: 'lokiTraceIdField',
       name: 'Loki trace ID field',

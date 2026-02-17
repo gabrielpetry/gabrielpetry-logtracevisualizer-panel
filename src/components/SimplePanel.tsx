@@ -75,10 +75,10 @@ export const SimplePanel: React.FC<Props> = ({ options, data, width, height }) =
   const styles = useStyles2(getStyles);
 
   // Try to parse trace and log data from the data frames
-  const { trace, logs, isDemo } = useMemo(() => {
+  const { trace, logs } = useMemo(() => {
     console.log('SimplePanel: Processing', data.series.length, 'data frames');
     // Attempt to parse real trace data from Tempo
-    const parsedTrace = parseTraceData(data.series);
+    const parsedTrace = parseTraceData(data.series, options.durationUnit);
     // Attempt to parse real log data from Loki
     const parsedLogs = parseLogData(data.series, {
       lokiTraceIdField: options.lokiTraceIdField,
