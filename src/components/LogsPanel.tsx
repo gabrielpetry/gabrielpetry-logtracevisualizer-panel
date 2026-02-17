@@ -186,6 +186,7 @@ export const LogsPanel: React.FC<LogsPanelProps> = ({ logs, spanStartTime }) => 
   const styles = useStyles2(getStyles);
   const [expandedLog, setExpandedLog] = useState<number | null>(null);
   const [showLabels, setShowLabels] = useState(false);
+  const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
 
   const formatTimestamp = (timestamp: number): string => {
     // Convert from nanoseconds to milliseconds
@@ -276,6 +277,23 @@ export const LogsPanel: React.FC<LogsPanelProps> = ({ logs, spanStartTime }) => 
               </>
             ) : (
               <>
+                <div style={{ display: 'flex', alignItems: 'center', marginRight: 8 }}>
+                  <IconButton
+                    name={copiedIndex === index ? 'check' : 'copy'}
+                    size="sm"
+                    tooltip={copiedIndex === index ? 'Copied' : 'Copy log'}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      try {
+                        navigator.clipboard.writeText(log.line);
+                        setCopiedIndex(index);
+                        window.setTimeout(() => setCopiedIndex((cur) => (cur === index ? null : cur)), 1500);
+                      } catch (err) {
+                        // ignore
+                      }
+                    }}
+                  />
+                </div>
                 <span className={styles.timestamp}>{getRelativeTime(log.timestamp)}</span>
                 <span className={cx(styles.levelBadge, getLevelStyle(log.level))}>{log.level || 'info'}</span>
                 <span className={cx(styles.message, log.level === 'error' && styles.messageError)}>{log.line}</span>
