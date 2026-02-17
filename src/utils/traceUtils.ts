@@ -1,5 +1,5 @@
 import { DataFrame, Field } from '@grafana/data';
-import { LogLine, Span, SpanWithLogs, Trace } from '../types';
+import { LogLine, LogSeverity, Span, SpanWithLogs, Trace } from '../types';
 
 /**
  * Service colors for consistent visualization
@@ -26,6 +26,92 @@ export function getServiceColor(serviceName: string): string {
   const color = SERVICE_COLORS[serviceColorMap.size % SERVICE_COLORS.length];
   serviceColorMap.set(serviceName, color);
   return color;
+}
+
+/**
+ * Determine the highest severity level from a list of logs
+ */
+export function getLogSeverity(logs: LogLine[]): LogSeverity {
+  if (!logs || logs.length === 0) {
+    return 'none';
+  }
+
+  let hasWarning = false;
+  let hasInfo = false;
+  let hasDebug = false;
+
+  for (const log of logs) {
+    const logLine = log.line.toLowerCase();
+    const level = log.level?.toLowerCase();
+
+    // Check for error/critical/exception
+    if (
+      level === 'error' ||
+      level === 'critical' ||
+      level === 'fatal' ||
+      logLine.includes('error') ||
+      logLine.includes('exception') ||
+      logLine.includes('critical') ||
+      logLine.includes('fatal') ||
+      logLine.includes('crit')
+    ) {
+      return 'error'; // Return immediately for errors (highest priority)
+    }
+
+    // Check for warnings
+    if (level === 'warn' || level === 'warning' || logLine.includes('warn')) {
+      hasWarning = true;
+    }
+
+    // Check for info
+    if (level === 'info') {
+      hasInfo = true;
+    }
+
+    // Check for debug
+    if (level === 'debug' || level === 'trace') {
+      hasDebug = true;
+    }
+  }
+
+  if (hasWarning) {
+    return 'warning';
+  }
+
+  if (hasInfo) {
+    return 'info';
+  }
+
+  if (hasDebug) {
+    return 'debug';
+  }
+
+  // If there are logs but no identified level, default to info
+  return 'info';
+}
+
+/**
+ * Get color for a span based on its log severity
+ */
+export function getColorBySeverity(
+  severity: LogSeverity,
+  errorColor: string,
+  warningColor: string,
+  infoColor: string,
+  debugColor: string
+): string | null {
+  switch (severity) {
+    case 'error':
+      return errorColor;
+    case 'warning':
+      return warningColor;
+    case 'info':
+      return infoColor;
+    case 'debug':
+      return debugColor;
+    case 'none':
+      return null; // Fall back to service color
+  }
 }
 
 /**

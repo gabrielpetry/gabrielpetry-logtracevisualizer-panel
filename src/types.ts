@@ -3,9 +3,17 @@ export interface SimpleOptions {
   showDuration: boolean;
   showServiceColors: boolean;
   collapsedByDefault: boolean;
+  colorizeByLogLevel: boolean;
+  errorColor: string;
+  warningColor: string;
+  infoColor: string;
+  debugColor: string;
   lokiTraceIdField: string;
   lokiSpanIdField: string;
 }
+
+// Log severity levels for coloring
+export type LogSeverity = 'error' | 'warning' | 'info' | 'debug' | 'none';
 
 // Span represents a single span in a trace
 export interface Span {
