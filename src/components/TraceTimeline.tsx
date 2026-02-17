@@ -12,7 +12,14 @@ interface TraceTimelineProps {
   logs: LogLine[];
   width: number;
   height: number;
+  showServiceColors?: boolean;
+  showDuration?: boolean;
   collapsedByDefault?: boolean;
+  colorizeByLogLevel?: boolean;
+  errorColor?: string;
+  warningColor?: string;
+  infoColor?: string;
+  debugColor?: string;
 }
 
 const getStyles = (theme: GrafanaTheme2) => ({
@@ -181,7 +188,14 @@ export const TraceTimeline: React.FC<TraceTimelineProps> = ({
   logs,
   width,
   height,
+  showServiceColors = true,
+  showDuration = true,
   collapsedByDefault = true,
+  colorizeByLogLevel = false,
+  errorColor = '#F2495C',
+  warningColor = '#FF9830',
+  infoColor = '#73BF69',
+  debugColor = '#A352CC',
 }) => {
   useTheme2();
   const styles = useStyles2(getStyles);
@@ -190,13 +204,17 @@ export const TraceTimeline: React.FC<TraceTimelineProps> = ({
   const spansWithLogs = useMemo(() => matchLogsToSpans(trace, logs), [trace, logs]);
 
   // Track expanded spans
-  const [expandedSpans, setExpandedSpans] = useState<Set<string>>(() => {
+  const [expandedSpans, setExpandedSpans] = useState<Set<string>>(new Set());
+
+  // Reset expanded state when collapsedByDefault changes
+  React.useEffect(() => {
     if (collapsedByDefault) {
-      return new Set();
+      setExpandedSpans(new Set());
+    } else {
+      // If not collapsed by default, expand spans that have logs
+      setExpandedSpans(new Set(spansWithLogs.filter((s) => s.logs.length > 0).map((s) => s.spanId)));
     }
-    // If not collapsed by default, expand spans that have logs
-    return new Set(spansWithLogs.filter((s) => s.logs.length > 0).map((s) => s.spanId));
-  });
+  }, [collapsedByDefault, spansWithLogs]);
 
   const toggleSpan = (spanId: string) => {
     setExpandedSpans((prev) => {
@@ -258,14 +276,16 @@ export const TraceTimeline: React.FC<TraceTimelineProps> = ({
       </div>
 
       {/* Services legend */}
-      <div className={styles.services}>
-        {trace.services.map((service) => (
-          <div key={service} className={styles.serviceItem}>
-            <div className={styles.serviceColor} style={{ background: getServiceColor(service) }} />
-            <span>{service}</span>
-          </div>
-        ))}
-      </div>
+      {showServiceColors && (
+        <div className={styles.services}>
+          {trace.services.map((service) => (
+            <div key={service} className={styles.serviceItem}>
+              <div className={styles.serviceColor} style={{ background: getServiceColor(service) }} />
+              <span>{service}</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Timeline header */}
       <div className={styles.timeline}>
