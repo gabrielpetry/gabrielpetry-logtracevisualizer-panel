@@ -1,0 +1,33 @@
+{
+  "$schema": "https://raw.githubusercontent.com/grafana/grafana/main/docs/sources/developers/plugins/plugin.schema.json",
+  "type": "panel",
+  "name": "Log-Trace Visualizer",
+  "id": "gabrielpetry-logtracevisualizer-panel",
+  "info": {
+    "keywords": [
+      "panel",
+      "trace",
+      "logs",
+      "tempo",
+      "loki",
+      "observability",
+      "spans"
+    ],
+    "description": "A beautiful trace visualization panel that shows span timelines with correlated logs from Loki. Click on any span to see its logs inline.",
+    "author": {
+      "name": "Gabrielpetry"
+    },
+    "logos": {
+      "small": "img/logo.svg",
+      "large": "img/logo.svg"
+    },
+    "links": [],
+    "screenshots": [],
+    "version": "%VERSION%",
+    "updated": "%TODAY%"
+  },
+  "dependencies": {
+    "grafanaDependency": ">=12.3.0",
+    "plugins": []
+  }
+}
