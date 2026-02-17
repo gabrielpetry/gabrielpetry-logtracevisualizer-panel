@@ -221,19 +221,41 @@ export const TraceTimeline: React.FC<TraceTimelineProps> = ({
 
   // Reset expanded state when collapsedByDefault changes
   React.useEffect(() => {
+    const rootId = trace.rootSpan?.spanId;
     if (collapsedByDefault) {
-      setExpandedSpans(new Set());
+      const init = new Set<string>();
+      if (rootId) init.add(rootId);
+      setExpandedSpans(init);
     } else {
-      // If not collapsed by default, expand spans that have logs
-      setExpandedSpans(new Set(spansWithLogs.filter((s) => s.logs.length > 0).map((s) => s.spanId)));
+      // If not collapsed by default, expand spans that have logs (and ensure root is expanded)
+      const init = new Set(spansWithLogs.filter((s) => s.logs.length > 0).map((s) => s.spanId));
+      if (rootId) init.add(rootId);
+      setExpandedSpans(init);
     }
-  }, [collapsedByDefault, spansWithLogs]);
+  }, [collapsedByDefault, spansWithLogs, trace.rootSpan?.spanId]);
+
+  // Helper to collect all descendant spanIds for a given span
+  const collectDescendantIds = (spanId: string, map: Map<string, typeof spansWithLogs[0]>, out: Set<string>) => {
+    const span = map.get(spanId);
+    if (!span || !span.children) {
+      return;
+    }
+    for (const child of span.children) {
+      out.add(child.spanId);
+      collectDescendantIds(child.spanId, map, out);
+    }
+  };
 
   const toggleSpan = (spanId: string) => {
     setExpandedSpans((prev) => {
       const next = new Set(prev);
       if (next.has(spanId)) {
+        // collapsing: also remove all descendants so they stay collapsed when hidden
         next.delete(spanId);
+        const spanMap = new Map(spansWithLogs.map((s) => [s.spanId, s]));
+        const toRemove = new Set<string>();
+        collectDescendantIds(spanId, spanMap, toRemove);
+        toRemove.forEach((id) => next.delete(id));
       } else {
         next.add(spanId);
       }
