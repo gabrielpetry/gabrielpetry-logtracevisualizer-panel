@@ -438,12 +438,11 @@ export function parseLogData(
           labels,
         });
       }
-
       logs.push({
         timestamp: Number(timeField.values[i]),
         line: String(lineField.values[i] || ''),
         labels,
-        level: parseLogLevel(level || labels.level),
+        level: parseLogLevel(level || labels.level || labels.detected_level),
         traceId: traceIdValue,
         spanId: spanIdValue,
       });
