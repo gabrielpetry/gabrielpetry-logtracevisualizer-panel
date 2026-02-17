@@ -200,6 +200,19 @@ export const TraceTimeline: React.FC<TraceTimelineProps> = ({
   useTheme2();
   const styles = useStyles2(getStyles);
 
+  // Debug: log trace duration raw and formatted
+  React.useEffect(() => {
+    try {
+      console.log('TraceTimeline: trace.duration raw =', trace.duration);
+      console.log('TraceTimeline: trace.duration formatted =', formatDuration(trace.duration));
+      if (trace.spans && trace.spans.length > 0) {
+        const sample = trace.spans.slice(0, 5).map((s) => ({ spanId: s.spanId, raw: s.duration, formatted: formatDuration(s.duration) }));
+        console.log('TraceTimeline: span duration samples =', sample);
+      }
+    } catch (e) {
+      // ignore
+    }
+  }, [trace]);
   // Process spans with logs
   const spansWithLogs = useMemo(() => matchLogsToSpans(trace, logs), [trace, logs]);
 

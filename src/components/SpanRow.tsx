@@ -197,6 +197,17 @@ export const SpanRow: React.FC<SpanRowProps> = ({
   const offsetPercent = ((span.startTime - traceStart) / traceDuration) * 100;
   const widthPercent = (span.duration / traceDuration) * 100;
 
+  // Debug: log span duration raw and formatted for first span
+  React.useEffect(() => {
+    if (span.depth === 0) {
+      try {
+        console.log('SpanRow: spanId=', span.spanId, 'raw duration=', span.duration, 'formatted=', formatDuration(span.duration));
+      } catch (e) {
+        // ignore
+      }
+    }
+  }, [span]);
+
   const depth = span.depth || 0;
   const indentPx = depth * 24;
   const hasLogs = span.logs && span.logs.length > 0;
