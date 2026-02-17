@@ -311,6 +311,13 @@ export const TraceTimeline: React.FC<TraceTimelineProps> = ({
             isExpanded={expandedSpans.has(span.spanId)}
             onToggle={() => toggleSpan(span.spanId)}
             timelineWidth={timelineWidth}
+            showServiceColors={showServiceColors}
+            showDuration={showDuration}
+            colorizeByLogLevel={colorizeByLogLevel}
+            errorColor={errorColor}
+            warningColor={warningColor}
+            infoColor={infoColor}
+            debugColor={debugColor}
           />
         ))}
       </div>

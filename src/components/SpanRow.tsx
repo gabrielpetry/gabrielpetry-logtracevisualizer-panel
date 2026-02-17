@@ -1,6 +1,6 @@
 import { Icon, Tooltip, useStyles2, useTheme2 } from '@grafana/ui';
 import { css, cx } from '@emotion/css';
-import { formatDuration, getServiceColor } from '../utils/traceUtils';
+import { formatDuration, getColorBySeverity, getLogSeverity, getServiceColor } from '../utils/traceUtils';
 
 import { GrafanaTheme2 } from '@grafana/data';
 import { LogsPanel } from './LogsPanel';
@@ -14,6 +14,13 @@ interface SpanRowProps {
   isExpanded: boolean;
   onToggle: () => void;
   timelineWidth: number;
+  showServiceColors?: boolean;
+  showDuration?: boolean;
+  colorizeByLogLevel?: boolean;
+  errorColor?: string;
+  warningColor?: string;
+  infoColor?: string;
+  debugColor?: string;
 }
 
 const getStyles = (theme: GrafanaTheme2) => ({
@@ -80,6 +87,14 @@ const getStyles = (theme: GrafanaTheme2) => ({
     font-size: 10px;
     font-weight: 500;
   `,
+  severityBadge: css`
+    padding: 1px 6px;
+    border-radius: 10px;
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  `,
   operationName: css`
     font-size: 13px;
     font-weight: 500;
@@ -145,10 +160,38 @@ export const SpanRow: React.FC<SpanRowProps> = ({
   isExpanded,
   onToggle,
   timelineWidth,
+  showServiceColors = true,
+  showDuration = true,
+  colorizeByLogLevel = false,
+  errorColor = '#F2495C',
+  warningColor = '#FF9830',
+  infoColor = '#73BF69',
+  debugColor = '#A352CC',
 }) => {
   useTheme2();
   const styles = useStyles2(getStyles);
   const serviceColor = getServiceColor(span.serviceName);
+
+  // Determine the color to use based on options
+  const spanColor = React.useMemo(() => {
+    if (colorizeByLogLevel && span.logs && span.logs.length > 0) {
+      const severity = getLogSeverity(span.logs);
+      const logColor = getColorBySeverity(severity, errorColor, warningColor, infoColor, debugColor);
+      if (logColor) {
+        return logColor;
+      }
+    }
+    // Fall back to service color if showServiceColors is enabled
+    return showServiceColors ? serviceColor : '#6B7280';
+  }, [colorizeByLogLevel, span.logs, errorColor, warningColor, infoColor, debugColor, showServiceColors, serviceColor]);
+
+  // Get log severity for badge display
+  const logSeverity = React.useMemo(() => {
+    if (colorizeByLogLevel && span.logs && span.logs.length > 0) {
+      return getLogSeverity(span.logs);
+    }
+    return 'none';
+  }, [colorizeByLogLevel, span.logs]);
 
   // Calculate timeline bar position and width
   const offsetPercent = ((span.startTime - traceStart) / traceDuration) * 100;
@@ -177,13 +220,28 @@ export const SpanRow: React.FC<SpanRowProps> = ({
         <div className={styles.indent} style={{ width: indentPx }} />
 
         {/* Service color indicator */}
-        <div className={styles.serviceIndicator} style={{ background: serviceColor }} />
+        <div className={styles.serviceIndicator} style={{ 
+          background: spanColor,
+          visibility: (showServiceColors || colorizeByLogLevel) ? 'visible' : 'hidden'
+        }} />
 
         {/* Service and Operation details */}
         <div className={styles.details}>
           <div className={styles.serviceName}>
             {span.serviceName}
             {hasLogs && <span className={styles.logCount}>{span.logs.length} logs</span>}
+            {colorizeByLogLevel && logSeverity !== 'none' && (
+              <span 
+                className={styles.severityBadge} 
+                style={{ 
+                  background: `${spanColor}30`,
+                  color: spanColor,
+                  border: `1px solid ${spanColor}60`
+                }}
+              >
+                {logSeverity.toUpperCase()}
+              </span>
+            )}
           </div>
           <Tooltip content={span.operationName} placement="top">
             <div className={styles.operationName}>{span.operationName}</div>
@@ -208,14 +266,14 @@ export const SpanRow: React.FC<SpanRowProps> = ({
               style={{
                 left: `${offsetPercent}%`,
                 width: `${Math.max(widthPercent, 0.5)}%`,
-                background: `linear-gradient(135deg, ${serviceColor} 0%, ${serviceColor}CC 100%)`,
+                background: `linear-gradient(135deg, ${spanColor} 0%, ${spanColor}CC 100%)`,
               }}
             />
           </Tooltip>
         </div>
 
         {/* Duration */}
-        <div className={styles.duration}>{formatDuration(span.duration)}</div>
+        {showDuration && <div className={styles.duration}>{formatDuration(span.duration)}</div>}
 
         {/* Tags */}
         <div className={styles.tags}>
