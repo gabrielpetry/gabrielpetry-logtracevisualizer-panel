@@ -81,5 +81,27 @@ export const plugin = new PanelPlugin<SimpleOptions>(SimplePanel).setPanelOption
       name: 'Loki span ID field',
       description: 'Field name in Loki logs containing the span ID',
       defaultValue: 'spanId',
+    })
+    .addTextInput({
+      path: 'minLogLevel',
+      name: 'Minimum log level (supports variables)',
+      description:
+        'Filter logs shown in the panel to this minimum severity (All shows every log). Allowed values: all, error, warn, info, debug, trace. You can use Grafana variables such as ${var}',
+      defaultValue: 'all',
+    })
+    .addTextInput({
+      path: 'spanFilter',
+      name: 'Span filter by success (supports variables)',
+      description:
+        'Control which spans are shown based on their success status. Allowed values: all, failed, successful. You can use Grafana variables such as ${var}',
+      defaultValue: 'all',
+    });
+
+    // Toggle to show/hide related logs by default
+    builder.addBooleanSwitch({
+      path: 'showRelatedLogs',
+      name: 'Show related logs',
+      description: 'When off, related logs panels for spans will be hidden. Can still toggle at runtime.',
+      defaultValue: true,
     });
 });

@@ -11,6 +11,12 @@ export interface SimpleOptions {
   lokiTraceIdField: string;
   lokiSpanIdField: string;
   durationUnit?: 'auto' | 'microseconds' | 'milliseconds' | 'seconds';
+  // Dynamic log level filter for displayed logs inside the panel
+  minLogLevel?: 'all' | 'error' | 'warn' | 'info' | 'debug' | 'trace';
+  // Filter spans by success status: all, only failed, or only successful
+  spanFilter?: 'all' | 'failed' | 'successful';
+  // Whether to show related logs by default (can also be toggled at runtime)
+  showRelatedLogs?: boolean;
 }
 
 // Log severity levels for coloring
