@@ -1,65 +1,59 @@
-# Grafana panel plugin template
+# Log & Trace Visualizer Panel for Grafana
 
-This template is a starting point for building a panel plugin for Grafana.
+This is a custom Grafana panel plugin for visualizing logs and traces together, designed to work with both Loki (logs) and Tempo (traces) datasources. It enables you to correlate logs and traces in a single panel for enhanced observability.
 
-## What are Grafana panel plugins?
+## Features
 
-Panel plugins allow you to add new types of visualizations to your dashboard, such as maps, clocks, pie charts, lists, and more.
+- Visualize logs and traces side by side
+- Correlate log lines with trace spans
+- Interactive timeline for trace navigation
 
-Use panel plugins when you want to do things like visualize data returned by data source queries, navigate between dashboards, or control external systems (such as smart home devices).
+## Requirements
 
-## Getting started
+This panel requires **two queries** to function properly:
 
-### Frontend
+1. **Loki query**: For logs data
+2. **Tempo query**: For traces data
 
-1. Install dependencies
+Both queries must be configured in the panel's query editor. The panel expects the first query to return logs (from Loki) and the second to return traces (from Tempo).
 
+## Getting Started
+
+### Development
+
+1. Install dependencies:
    ```bash
    npm install
    ```
-
-2. Build plugin in development mode and run in watch mode
-
+2. Start development mode:
    ```bash
    npm run dev
    ```
-
-3. Build plugin in production mode
-
+3. Build for production:
    ```bash
    npm run build
    ```
-
-4. Run the tests (using Jest)
-
+4. Run tests:
    ```bash
-   # Runs the tests and watches for changes, requires git init first
    npm run test
-
-   # Exits after running all the tests
    npm run test:ci
    ```
-
-5. Spin up a Grafana instance and run the plugin inside it (using Docker)
-
+5. Run Grafana with the plugin (Docker):
    ```bash
    npm run server
    ```
-
-6. Run the E2E tests (using Playwright)
-
+6. Run E2E tests:
    ```bash
-   # Spins up a Grafana instance first that we tests against
-   npm run server
-
-   # If you wish to start a certain Grafana version. If not specified will use latest by default
-   GRAFANA_VERSION=11.3.0 npm run server
-
-   # Starts the tests
    npm run e2e
    ```
+7. Lint code:
 
-7. Run the linter
+   ```bash
+   npm run lint
+   npm run lint:fix
+   ```
+
+8. Run the linter
 
    ```bash
    npm run lint
