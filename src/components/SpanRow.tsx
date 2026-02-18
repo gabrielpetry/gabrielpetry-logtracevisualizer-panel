@@ -1,6 +1,6 @@
 import { Icon, Tooltip, useStyles2, useTheme2 } from '@grafana/ui';
 import { css, cx } from '@emotion/css';
-import { formatDuration, getColorBySeverity, getLogSeverity, getServiceColor } from '../utils/traceUtils';
+import { formatDuration, getColorBySeverity, getLogSeverity, getServiceColor, isSpanFailed } from '../utils/traceUtils';
 
 import { GrafanaTheme2 } from '@grafana/data';
 import { LogsPanel } from './LogsPanel';
@@ -21,6 +21,8 @@ interface SpanRowProps {
   warningColor?: string;
   infoColor?: string;
   debugColor?: string;
+  showRelatedLogs?: boolean;
+  onToggleRelatedLogs?: () => void;
 }
 
 const getStyles = (theme: GrafanaTheme2) => ({
@@ -78,6 +80,14 @@ const getStyles = (theme: GrafanaTheme2) => ({
     display: flex;
     align-items: center;
     gap: 6px;
+  `,
+  statusDot: css`
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin-right: 6px;
+    flex-shrink: 0;
+    box-shadow: 0 0 0 2px ${theme.colors.background.primary};
   `,
   logCount: css`
     background: ${theme.colors.primary.main}20;
@@ -167,6 +177,8 @@ export const SpanRow: React.FC<SpanRowProps> = ({
   warningColor = '#FF9830',
   infoColor = '#73BF69',
   debugColor = '#A352CC',
+  showRelatedLogs = true,
+  onToggleRelatedLogs,
 }) => {
   useTheme2();
   const styles = useStyles2(getStyles);
@@ -212,12 +224,8 @@ export const SpanRow: React.FC<SpanRowProps> = ({
   const indentPx = depth * 24;
   const hasLogs = span.logs && span.logs.length > 0;
 
-  // Check for error tags
-  const statusCode = Number(span.tags['http.status_code']);
-  const hasError =
-    span.tags['error'] === true ||
-    (statusCode && statusCode >= 400) ||
-    span.tags['otel.status_code'] === 'ERROR';
+  // Check for error via centralized helper (tags or logs)
+  const hasError = isSpanFailed(span) || (span.logs && span.logs.some((l) => (l.level || '').toString().toLowerCase() === 'error'));
 
   return (
     <div className={cx(styles.container, isExpanded && styles.expanded)}>
@@ -239,8 +247,33 @@ export const SpanRow: React.FC<SpanRowProps> = ({
         {/* Service and Operation details */}
         <div className={styles.details}>
           <div className={styles.serviceName}>
-            {span.serviceName}
-            {hasLogs && <span className={styles.logCount}>{span.logs.length} logs</span>}
+              {/* Success/failure indicator: green if successful, red if failed */}
+            <div
+              className={styles.statusDot}
+              style={{ background: hasError ? '#F2495C' : '#3ECF8E' }}
+              title={hasError ? 'Failed span' : 'Successful span'}
+            />
+              {span.serviceName}
+              {hasLogs && (
+                <>
+                  <span className={styles.logCount}>{span.logs.length} logs</span>
+                  <div style={{ marginLeft: 6 }} onClick={(e) => e.stopPropagation()}>
+                    <button
+                      onClick={onToggleRelatedLogs}
+                      style={{
+                        border: 'none',
+                        background: 'transparent',
+                        cursor: 'pointer',
+                        padding: 4,
+                        marginLeft: 4,
+                      }}
+                      title={showRelatedLogs ? 'Hide related logs' : 'Show related logs'}
+                    >
+                      <Icon name={showRelatedLogs ? 'eye' : 'eye-slash'} />
+                    </button>
+                  </div>
+                </>
+              )}
             {colorizeByLogLevel && logSeverity !== 'none' && (
               <span 
                 className={styles.severityBadge} 
@@ -299,7 +332,9 @@ export const SpanRow: React.FC<SpanRowProps> = ({
       </div>
 
       {/* Expanded logs panel */}
-      {isExpanded && hasLogs && <LogsPanel logs={span.logs} spanStartTime={span.startTime} />}
+      {isExpanded && hasLogs && showRelatedLogs && (
+        <LogsPanel logs={span.logs} spanStartTime={span.startTime} />
+      )}
     </div>
   );
 };
