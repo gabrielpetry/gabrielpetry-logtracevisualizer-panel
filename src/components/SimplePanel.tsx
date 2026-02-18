@@ -104,6 +104,9 @@ export const SimplePanel: React.FC<Props> = ({ options, data, width, height }) =
         warningColor={options.warningColor}
         infoColor={options.infoColor}
         debugColor={options.debugColor}
+        minLogLevel={options.minLogLevel}
+        spanFilter={options.spanFilter}
+        showRelatedLogs={options.showRelatedLogs}
       />
     </div>
   );

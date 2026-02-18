@@ -20,6 +20,9 @@ interface TraceTimelineProps {
   warningColor?: string;
   infoColor?: string;
   debugColor?: string;
+  minLogLevel?: 'all' | 'error' | 'warn' | 'info' | 'debug' | 'trace';
+  spanFilter?: 'all' | 'failed' | 'successful';
+  showRelatedLogs?: boolean;
 }
 
 const getStyles = (theme: GrafanaTheme2) => ({
@@ -196,6 +199,9 @@ export const TraceTimeline: React.FC<TraceTimelineProps> = ({
   warningColor = '#FF9830',
   infoColor = '#73BF69',
   debugColor = '#A352CC',
+  minLogLevel = 'all',
+  spanFilter = 'all',
+  showRelatedLogs = true,
 }) => {
   useTheme2();
   const styles = useStyles2(getStyles);
@@ -375,6 +381,8 @@ export const TraceTimeline: React.FC<TraceTimelineProps> = ({
             warningColor={warningColor}
             infoColor={infoColor}
             debugColor={debugColor}
+            showRelatedLogs={showLogsBySpan.has(span.spanId)}
+            onToggleRelatedLogs={() => toggleLogsForSpan(span.spanId)}
           />
         ))}
       </div>
