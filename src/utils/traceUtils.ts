@@ -540,6 +540,46 @@ export function matchLogsToSpans(trace: Trace, logs: LogLine[]): SpanWithLogs[] 
 }
 
 /**
+ * Determine whether a span should be considered failed based on tags and values.
+ * This is case-insensitive and tolerant of different tag names/values (e.g. "Status", "status", "otel.status_code", numeric codes).
+ */
+export function isSpanFailed(span: Span | SpanWithLogs): boolean {
+  if (!span || !span.tags) return false;
+
+  const tags = span.tags;
+
+  // Check for common http status codes
+  const statusKeys = Object.keys(tags).filter((k) => k.toLowerCase().includes('status') || k.toLowerCase().includes('status_code') || k.toLowerCase().includes('status.code'));
+
+  for (const k of statusKeys) {
+    const v = tags[k];
+    if (typeof v === 'number' && v >= 400) return true;
+    if (typeof v === 'string') {
+      const lv = v.toLowerCase();
+      const num = Number(v);
+      if ((isFinite(num) && num >= 400) || lv.includes('error') || lv.includes('fail') || lv.includes('exception')) return true;
+    }
+  }
+
+  // Generic checks across all tags for 'error' indicators
+  for (const k of Object.keys(tags)) {
+    const v = tags[k];
+    const keyLower = k.toLowerCase();
+    if (keyLower.includes('error') || keyLower.includes('err')) {
+      if (v === true) return true;
+      if (typeof v === 'string' && v.toLowerCase() === 'true') return true;
+      if (typeof v === 'string' && v.toLowerCase().includes('error')) return true;
+    }
+    if (typeof v === 'string') {
+      const lv = v.toLowerCase();
+      if (lv.includes('error') || lv.includes('fail') || lv.includes('exception')) return true;
+    }
+  }
+
+  return false;
+}
+
+/**
  * Flatten spans tree into array maintaining hierarchy order
  */
 export function flattenSpans(span: Span | undefined): Span[] {
