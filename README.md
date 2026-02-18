@@ -114,4 +114,4 @@ Below you can find source code for existing app plugins and other related docume
 
 Below is an example screenshot of the panel in action, showing logs and traces visualized together:
 
-![Log & Trace Visualizer Example](assets/image.png)
+![Log & Trace Visualizer Example](assets/screenshot.png)
