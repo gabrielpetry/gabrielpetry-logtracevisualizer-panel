@@ -1,11 +1,12 @@
 import { Icon, useStyles2, useTheme2 } from '@grafana/ui';
 import { LogLine, Trace } from '../types';
 import React, { useMemo, useState } from 'react';
-import { formatDuration, getServiceColor, matchLogsToSpans } from '../utils/traceUtils';
+import { formatDuration, getServiceColor, isSpanFailed, matchLogsToSpans } from '../utils/traceUtils';
 
 import { GrafanaTheme2 } from '@grafana/data';
 import { SpanRow } from './SpanRow';
 import { css } from '@emotion/css';
+import { getTemplateSrv } from '@grafana/runtime';
 
 interface TraceTimelineProps {
   trace: Trace;
@@ -220,28 +221,163 @@ export const TraceTimeline: React.FC<TraceTimelineProps> = ({
     }
   }, [trace]);
   // Process spans with logs
-  const spansWithLogs = useMemo(() => matchLogsToSpans(trace, logs), [trace, logs]);
+  const rawSpansWithLogs = useMemo(() => matchLogsToSpans(trace, logs), [trace, logs]);
+
+  // Helper to rank log levels
+  const levelRank = (level?: LogLine['level'] | string): number => {
+    switch ((level || 'info').toString().toLowerCase()) {
+      case 'error':
+        return 4;
+      case 'warn':
+      case 'warning':
+        return 3;
+      case 'info':
+        return 2;
+      case 'debug':
+        return 1;
+      case 'trace':
+        return 0;
+      default:
+        return 2;
+    }
+  };
+  // Compute a key based on current template variables so we can depend on variable changes
+  const [templateVarsKey, setTemplateVarsKey] = React.useState<string>('');
+  React.useEffect(() => {
+    const compute = () => {
+      try {
+        const vars = getTemplateSrv().getVariables() || [];
+        const key = JSON.stringify(
+          vars.map((v: any) => {
+            const cur = v.current;
+            return (cur && (cur.text ?? cur.value)) || v.name || null;
+          })
+        );
+        setTemplateVarsKey(key);
+      } catch (e) {
+        // ignore
+      }
+    };
+    compute();
+    const id = window.setInterval(compute, 1000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  // Resolve variables in inputs (support Grafana variables like ${var}) and react to template changes
+  const resolvedMinLogLevel = React.useMemo((): string => {
+    try {
+      const raw = typeof minLogLevel === 'string' ? minLogLevel : String(minLogLevel || 'all');
+      return getTemplateSrv().replace(raw).toString().trim().toLowerCase();
+    } catch (e) {
+      return (minLogLevel || 'all').toString().trim().toLowerCase();
+    }
+  }, [minLogLevel, templateVarsKey]);
+
+  const resolvedSpanFilter = React.useMemo((): string => {
+    try {
+      const raw = typeof spanFilter === 'string' ? spanFilter : String(spanFilter || 'all');
+      return getTemplateSrv().replace(raw).toString().trim().toLowerCase();
+    } catch (e) {
+      return (spanFilter || 'all').toString().trim().toLowerCase();
+    }
+  }, [spanFilter, templateVarsKey]);
+
+  const minRank = (() => {
+    switch (resolvedMinLogLevel) {
+      case 'error':
+        return 4;
+      case 'warn':
+        return 3;
+      case 'info':
+        return 2;
+      case 'debug':
+        return 1;
+      case 'trace':
+        return 0;
+      default:
+        return -1; // 'all' -> include everything
+    }
+  })();
+
+  // Use centralized helper to determine if a span is failed; also consider error logs
+  const spanHasError = (span: typeof rawSpansWithLogs[0]) => {
+    const tagBased = isSpanFailed(span as any);
+    const hasErrorLog = span.logs && span.logs.some((l) => (l.level || '').toString().toLowerCase() === 'error');
+    return tagBased || hasErrorLog;
+  };
+
+  // Apply min log level filtering and span success filter
+  const spansWithLogs = useMemo(() => {
+    const filtered = rawSpansWithLogs.map((s) => {
+      const logsFiltered = minRank >= 0 ? s.logs.filter((l) => levelRank(l.level) >= minRank) : s.logs.slice();
+      return {
+        ...s,
+        logs: logsFiltered,
+      };
+    });
+
+    if (!resolvedSpanFilter || resolvedSpanFilter === 'all') return filtered;
+    if (resolvedSpanFilter === 'failed') return filtered.filter((s) => spanHasError(s));
+    if (resolvedSpanFilter === 'successful') return filtered.filter((s) => !spanHasError(s));
+    return filtered;
+  }, [rawSpansWithLogs, resolvedMinLogLevel, resolvedSpanFilter, templateVarsKey, trace.rootSpan?.spanId]);
+
+  // Ensure the root span is always present in the spans list even if filters removed it
+  const spansWithLogsEnsuringRoot = useMemo(() => {
+    if (!trace.rootSpan) return spansWithLogs;
+    const rootId = trace.rootSpan.spanId;
+    const found = spansWithLogs.find((s) => s.spanId === rootId);
+    if (found) return spansWithLogs;
+
+    // Try to find root in raw spans and add it (apply same log filtering rules)
+    const rawRoot = rawSpansWithLogs.find((s) => s.spanId === rootId);
+    if (!rawRoot) return spansWithLogs;
+
+    const logsFiltered = minRank >= 0 ? rawRoot.logs.filter((l) => levelRank(l.level) >= minRank) : rawRoot.logs.slice();
+    const rootWithLogs = { ...rawRoot, logs: logsFiltered };
+    return [rootWithLogs, ...spansWithLogs];
+  }, [spansWithLogs, rawSpansWithLogs, trace.rootSpan?.spanId, resolvedMinLogLevel, resolvedSpanFilter, templateVarsKey]);
+
+  // Ensure root is present in the canonical spans list
+  const finalSpans = spansWithLogsEnsuringRoot;
 
   // Track expanded spans
   const [expandedSpans, setExpandedSpans] = useState<Set<string>>(new Set());
 
-  // Reset expanded state when collapsedByDefault changes
+  // Runtime toggle to show/hide related logs per-span (defaults from option)
+  const [showLogsBySpan, setShowLogsBySpan] = useState<Set<string>>(() => {
+    const init = new Set<string>();
+    if (showRelatedLogs) {
+      rawSpansWithLogs.forEach((s) => {
+        if (s.logs && s.logs.length > 0) init.add(s.spanId);
+      });
+    }
+    return init;
+  });
+
+  // Initialize expanded state when a new trace loads, but preserve user toggles across data refreshes
+  const prevTraceIdRef = React.useRef<string | undefined>(undefined);
   React.useEffect(() => {
     const rootId = trace.rootSpan?.spanId;
+    if (prevTraceIdRef.current === trace.traceId) {
+      return; // same trace ID — preserve current expanded state
+    }
+    prevTraceIdRef.current = trace.traceId;
+
     if (collapsedByDefault) {
       const init = new Set<string>();
       if (rootId) init.add(rootId);
       setExpandedSpans(init);
     } else {
       // If not collapsed by default, expand spans that have logs (and ensure root is expanded)
-      const init = new Set(spansWithLogs.filter((s) => s.logs.length > 0).map((s) => s.spanId));
+      const init = new Set(finalSpans.filter((s) => s.logs.length > 0).map((s) => s.spanId));
       if (rootId) init.add(rootId);
       setExpandedSpans(init);
     }
-  }, [collapsedByDefault, spansWithLogs, trace.rootSpan?.spanId]);
+  }, [trace.traceId, collapsedByDefault, finalSpans, trace.rootSpan?.spanId]);
 
   // Helper to collect all descendant spanIds for a given span
-  const collectDescendantIds = (spanId: string, map: Map<string, typeof spansWithLogs[0]>, out: Set<string>) => {
+  const collectDescendantIds = (spanId: string, map: Map<string, typeof finalSpans[0]>, out: Set<string>) => {
     const span = map.get(spanId);
     if (!span || !span.children) {
       return;
@@ -258,7 +394,7 @@ export const TraceTimeline: React.FC<TraceTimelineProps> = ({
       if (next.has(spanId)) {
         // collapsing: also remove all descendants so they stay collapsed when hidden
         next.delete(spanId);
-        const spanMap = new Map(spansWithLogs.map((s) => [s.spanId, s]));
+        const spanMap = new Map(finalSpans.map((s) => [s.spanId, s]));
         const toRemove = new Set<string>();
         collectDescendantIds(spanId, spanMap, toRemove);
         toRemove.forEach((id) => next.delete(id));
@@ -269,17 +405,26 @@ export const TraceTimeline: React.FC<TraceTimelineProps> = ({
     });
   };
 
+  const toggleLogsForSpan = (spanId: string) => {
+    setShowLogsBySpan((prev) => {
+      const next = new Set(prev);
+      if (next.has(spanId)) next.delete(spanId);
+      else next.add(spanId);
+      return next;
+    });
+  };
+
   // Calculate timeline width based on panel width
   const timelineWidth = Math.max(200, width - 500);
 
   // Build a map of spans for ancestor checks
-  const spanMap = useMemo(() => new Map(spansWithLogs.map((s) => [s.spanId, s])), [spansWithLogs]);
+  const spanMap = useMemo(() => new Map(finalSpans.map((s) => [s.spanId, s])), [finalSpans]);
 
   // Determine which spans should be visible based on expanded parents
   const visibleSpans = useMemo(() => {
-    const visible: typeof spansWithLogs = [];
+    const visible: typeof finalSpans = [];
 
-    const isSpanVisible = (span: typeof spansWithLogs[0]): boolean => {
+    const isSpanVisible = (span: typeof finalSpans[0]): boolean => {
       if (!span.parentSpanId) return true; // root-level spans always visible
       const parent = spanMap.get(span.parentSpanId);
       if (!parent) return true;
@@ -288,11 +433,11 @@ export const TraceTimeline: React.FC<TraceTimelineProps> = ({
       return expandedSpans.has(parent.spanId);
     };
 
-    for (const s of spansWithLogs) {
+    for (const s of finalSpans) {
       if (isSpanVisible(s)) visible.push(s);
     }
     return visible;
-  }, [spansWithLogs, spanMap, expandedSpans]);
+  }, [finalSpans, spanMap, expandedSpans]);
 
   // Calculate time markers
   const timeMarkers = useMemo(() => {
