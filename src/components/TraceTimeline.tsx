@@ -56,22 +56,6 @@ const getStyles = (theme: GrafanaTheme2) => ({
     font-size: 11px;
     color: ${theme.colors.text.secondary};
   `,
-  traceIdLabel: css`
-    color: ${theme.colors.text.disabled};
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-  `,
-  traceIdValue: css`
-    font-family: 'JetBrains Mono', 'Fira Code', monospace;
-    background: ${theme.colors.background.canvas};
-    padding: 2px 8px;
-    border-radius: 4px;
-    color: ${theme.colors.primary.text};
-  `,
-  stats: css`
-    display: flex;
-    gap: 20px;
-  `,
   stat: css`
     display: flex;
     flex-direction: column;
@@ -455,33 +439,6 @@ export const TraceTimeline: React.FC<TraceTimelineProps> = ({
 
   return (
     <div className={styles.container} style={{ width, height }}>
-      {/* Header */}
-      <div className={styles.header}>
-        <div className={styles.headerLeft}>
-          <div className={styles.traceId}>
-            <span className={styles.traceIdLabel}>Trace ID</span>
-            <span className={styles.traceIdValue}>{trace.traceId}</span>
-          </div>
-        </div>
-        <div className={styles.stats}>
-          <div className={styles.stat}>
-            <span className={styles.statValue}>{trace.spans.length}</span>
-            <span className={styles.statLabel}>Spans</span>
-          </div>
-          <div className={styles.stat}>
-            <span className={styles.statValue}>{trace.services.length}</span>
-            <span className={styles.statLabel}>Services</span>
-          </div>
-          <div className={styles.stat}>
-            <span className={styles.statValue}>{formatDuration(trace.duration)}</span>
-            <span className={styles.statLabel}>Duration</span>
-          </div>
-          <div className={styles.stat}>
-            <span className={styles.statValue}>{totalLogs}</span>
-            <span className={styles.statLabel}>Logs</span>
-          </div>
-        </div>
-      </div>
 
       {/* Services legend */}
       {showServiceColors && (
