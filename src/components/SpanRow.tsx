@@ -327,8 +327,13 @@ export const SpanRow: React.FC<SpanRowProps> = ({
       </div>
 
       {/* Expanded logs panel */}
-      {isExpanded && hasLogs && showRelatedLogs && (
-        <LogsPanel logs={span.logs} spanStartTime={span.startTime} />
+      {isExpanded && hasLogs && (
+        <LogsPanel
+          logs={span.logs}
+          spanStartTime={span.startTime}
+          isCollapsed={!showRelatedLogs}
+          onToggleCollapse={onToggleRelatedLogs}
+        />
       )}
     </div>
   );
