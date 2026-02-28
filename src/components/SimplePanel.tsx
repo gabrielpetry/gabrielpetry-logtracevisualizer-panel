@@ -4,10 +4,10 @@ import { css, cx } from '@emotion/css';
 import { parseLogData, parseTraceData } from '../utils/traceUtils';
 
 import { PanelProps } from '@grafana/data';
-import { SimpleOptions } from 'types';
+import { SimpleOptions } from '../types';
 import { TraceTimeline } from './TraceTimeline';
 
-interface Props extends PanelProps<SimpleOptions> {}
+interface Props extends PanelProps<SimpleOptions> { }
 
 const getStyles = () => {
   return {
