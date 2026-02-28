@@ -161,6 +161,18 @@ const getStyles = (theme: GrafanaTheme2) => ({
     background: ${theme.colors.error.main}20;
     color: ${theme.colors.error.text};
   `,
+  spanIdIcon: css`
+    margin-left: 6px;
+    cursor: copy;
+    color: ${theme.colors.text.disabled};
+    transition: color 0.15s ease;
+    display: flex;
+    align-items: center;
+
+    &:hover {
+      color: ${theme.colors.text.primary};
+    }
+  `,
 });
 
 export const SpanRow: React.FC<SpanRowProps> = ({
@@ -227,73 +239,56 @@ export const SpanRow: React.FC<SpanRowProps> = ({
   // Check for error via centralized helper (tags or logs)
   const hasError = isSpanFailed(span) || (span.logs && span.logs.some((l) => (l.level || '').toString().toLowerCase() === 'error'));
 
+  const onCopySpanId = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(span.spanId);
+  };
+
   return (
     <div className={cx(styles.container, isExpanded && styles.expanded)}>
       <div className={styles.row} onClick={onToggle}>
-        {/* Expand Icon */}
-        <div className={cx(styles.expandIcon, isExpanded && styles.expandIconRotated)}>
-          {hasLogs ? <Icon name="angle-right" size="md" /> : <span style={{ width: 16 }} />}
-        </div>
-
-        {/* Indentation based on depth */}
-        <div className={styles.indent} style={{ width: indentPx }} />
-
-        {/* Service color indicator */}
-        <div className={styles.serviceIndicator} style={{ 
-          background: spanColor,
-          visibility: (showServiceColors || colorizeByLogLevel) ? 'visible' : 'hidden'
-        }} />
-
-        {/* Service and Operation details */}
-        <div className={styles.details}>
-          <div className={styles.serviceName}>
-              {/* Success/failure indicator: green if successful, red if failed */}
-            <div
-              className={styles.statusDot}
-              style={{ background: hasError ? '#F2495C' : '#3ECF8E' }}
-              title={hasError ? 'Failed span' : 'Successful span'}
-            />
-              {span.serviceName}
-              {hasLogs && (
-                <>
-                  <span className={styles.logCount}>{span.logs.length} logs</span>
-                  <div style={{ marginLeft: 6 }} onClick={(e) => e.stopPropagation()}>
-                    <button
-                      onClick={onToggleRelatedLogs}
-                      style={{
-                        border: 'none',
-                        background: 'transparent',
-                        cursor: 'pointer',
-                        padding: 4,
-                        marginLeft: 4,
-                      }}
-                      title={showRelatedLogs ? 'Hide related logs' : 'Show related logs'}
-                    >
-                      <Icon name={showRelatedLogs ? 'eye' : 'eye-slash'} />
-                    </button>
-                  </div>
-                </>
-              )}
-            {colorizeByLogLevel && logSeverity !== 'none' && (
-              <span 
-                className={styles.severityBadge} 
-                style={{ 
-                  background: `${spanColor}30`,
-                  color: spanColor,
-                  border: `1px solid ${spanColor}60`
-                }}
-              >
-                {logSeverity.toUpperCase()}
-              </span>
-            )}
+        {/* Metadata section (Fixed width to align with legend) */}
+        <div style={{ width: 350, display: 'flex', alignItems: 'center', flexShrink: 0, overflow: 'hidden', paddingRight: 16 }}>
+          {/* Expand Icon */}
+          <div className={cx(styles.expandIcon, isExpanded && styles.expandIconRotated)}>
+            {(hasLogs || (span.children && span.children.length > 0)) ? <Icon name="angle-right" size="md" /> : <span style={{ width: 16 }} />}
           </div>
-          <Tooltip content={span.operationName} placement="top">
-            <div className={styles.operationName}>{span.operationName}</div>
-          </Tooltip>
+
+          {/* Indentation based on depth */}
+          <div className={styles.indent} style={{ width: indentPx }} />
+
+          {/* Service color indicator */}
+          <div className={styles.serviceIndicator} style={{
+            background: spanColor,
+            visibility: (showServiceColors || colorizeByLogLevel) ? 'visible' : 'hidden'
+          }} />
+
+          {/* Service and Operation details */}
+          <div className={styles.details} style={{ margin: 0 }}>
+            <div className={styles.serviceName}>
+              <div
+                className={styles.statusDot}
+                style={{ background: hasError ? '#F2495C' : '#3ECF8E' }}
+                title={hasError ? 'Failed span' : 'Successful span'}
+              />
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {span.serviceName}
+              </span>
+              <Tooltip content={`Click to copy Span ID: ${span.spanId}`} placement="top">
+                <div className={styles.spanIdIcon} onClick={onCopySpanId}>
+                  <Icon name="copy" size="xs" />
+                </div>
+              </Tooltip>
+              {hasLogs && <span className={styles.logCount} style={{ flexShrink: 0, marginLeft: 'auto' }}>{span.logs.length}</span>}
+            </div>
+            <Tooltip content={span.operationName} placement="top">
+              <div className={styles.operationName}>{span.operationName}</div>
+            </Tooltip>
+          </div>
         </div>
 
         {/* Timeline visualization */}
-        <div className={styles.timeline} style={{ width: timelineWidth }}>
+        <div className={styles.timeline} style={{ flex: 1 }}>
           <Tooltip
             content={
               <div>
