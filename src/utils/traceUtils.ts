@@ -172,31 +172,50 @@ export function parseTraceData(
   let detectedUnit: string | null = null;
   if (durationUnit === 'auto') {
     try {
+      // Check startTime magnitude first as it's the most reliable indicator
+      // Epochs:
+      // > 1e17: nanoseconds (e.g., 1.7e18)
+      // 1e14 - 1e17: microseconds (e.g., 1.7e15)
+      // 1e11 - 1e14: milliseconds (e.g., 1.7e12)
+      // < 1e11: seconds (e.g., 1.7e9)
+      const firstStartTime = Number(startTimeField.values[0]);
+
       const samples: number[] = [];
       for (let i = 0; i < Math.min(50, length); i++) {
         const v = Number(durationField.values[i]);
         if (isFinite(v) && v > 0) samples.push(v);
       }
-      if (samples.length > 0) {
+
+      if (firstStartTime > 1e16) {
+        detectedUnit = 'nanoseconds (via startTime)';
+        durationMultiplier = 1 / 1000; // ns -> µs
+      } else if (firstStartTime > 1e13) {
+        detectedUnit = 'microseconds (via startTime)';
+        durationMultiplier = 1; // µs
+      } else if (firstStartTime > 1e10) {
+        detectedUnit = 'milliseconds (via startTime)';
+        durationMultiplier = 1000; // ms -> µs
+      } else if (samples.length > 0) {
+        // Fallback to duration heuristics if startTime is not a standard epoch
         samples.sort((a, b) => a - b);
         const mid = Math.floor(samples.length / 2);
         const median = samples.length % 2 === 1 ? samples[mid] : (samples[mid - 1] + samples[mid]) / 2;
-        // Heuristics based on magnitude
+
         if (median >= 1e9) {
-          detectedUnit = 'nanoseconds';
-          durationMultiplier = 1 / 1000; // ns -> µs
+          detectedUnit = 'nanoseconds (via duration)';
+          durationMultiplier = 1 / 1000;
         } else if (median >= 1e6) {
-          detectedUnit = 'microseconds';
-          durationMultiplier = 1; // µs
+          detectedUnit = 'microseconds (via duration)';
+          durationMultiplier = 1;
         } else if (median >= 1e3) {
-          detectedUnit = 'milliseconds';
-          durationMultiplier = 1000; // ms -> µs
+          detectedUnit = 'milliseconds (via duration)';
+          durationMultiplier = 1000;
         } else {
-          detectedUnit = 'seconds';
-          durationMultiplier = 1000000; // s -> µs
+          detectedUnit = 'seconds (via duration)';
+          durationMultiplier = 1000000;
         }
-        console.log('parseTraceData: auto-detected duration unit=', detectedUnit, 'median=', median);
       }
+      console.log('parseTraceData: auto-detected duration unit=', detectedUnit, 'multiplier=', durationMultiplier, 'startTime=', firstStartTime);
     } catch (e) {
       // fallback
       durationMultiplier = 1;
@@ -600,25 +619,11 @@ export function flattenSpans(span: Span | undefined): Span[] {
  * Format duration from microseconds to human readable
  */
 export function formatDuration(microseconds: number): string {
-  // Accept either microseconds or milliseconds by auto-detecting the magnitude.
   if (!isFinite(microseconds) || microseconds <= 0) {
     return '0µs';
   }
 
-  let micros = microseconds;
-
-  // Heuristics to determine unit:
-  // - If value looks like microseconds (>= 1e6), treat as µs
-  // - If value looks like milliseconds (>= 1e3 and < 1e6), treat as ms and convert to µs
-  // - Otherwise treat as µs
-  if (microseconds >= 1e6) {
-    micros = microseconds; // already µs
-  } else if (microseconds >= 1e3) {
-    // most likely milliseconds -> convert to µs
-    micros = microseconds * 1000;
-  } else {
-    micros = microseconds; // small values are µs
-  }
+  const micros = microseconds;
 
   if (micros < 1000) {
     return `${micros.toFixed(0)}µs`;
