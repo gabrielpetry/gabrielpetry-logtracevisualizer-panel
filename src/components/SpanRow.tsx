@@ -147,7 +147,7 @@ const getStyles = (theme: GrafanaTheme2) => ({
     gap: 4px;
     margin-left: 12px;
     flex-wrap: wrap;
-    max-width: 150px;
+    width: 150px;
   `,
   tag: css`
     padding: 2px 6px;
@@ -319,7 +319,7 @@ export const SpanRow: React.FC<SpanRowProps> = ({
           {hasError && <span className={cx(styles.tag, styles.tagError)}>error</span>}
           {span.tags['http.method'] && <span className={styles.tag}>{String(span.tags['http.method'])}</span>}
           {span.tags['http.status_code'] && (
-            <span className={cx(styles.tag, statusCode >= 400 && styles.tagError)}>
+            <span className={cx(styles.tag, Number(span.tags['http.status_code']) >= 400 && styles.tagError)}>
               {String(span.tags['http.status_code'])}
             </span>
           )}
