@@ -8,6 +8,8 @@ import { LogLine } from '../types';
 interface LogsPanelProps {
   logs: LogLine[];
   spanStartTime: number;
+  isCollapsed?: boolean;
+  onToggleCollapse?: () => void;
 }
 
 const slideIn = keyframes`
@@ -181,12 +183,23 @@ const getStyles = (theme: GrafanaTheme2) => ({
   `,
 });
 
-export const LogsPanel: React.FC<LogsPanelProps> = ({ logs, spanStartTime }) => {
+export const LogsPanel: React.FC<LogsPanelProps> = ({ logs, spanStartTime, isCollapsed: isCollapsedProp, onToggleCollapse }) => {
   useTheme2();
   const styles = useStyles2(getStyles);
   const [expandedLog, setExpandedLog] = useState<number | null>(null);
   const [showLabels, setShowLabels] = useState(false);
+  const [isCollapsedInternal, setIsCollapsedInternal] = useState(false);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
+
+  const isCollapsed = isCollapsedProp !== undefined ? isCollapsedProp : isCollapsedInternal;
+
+  const toggleCollapse = () => {
+    if (onToggleCollapse) {
+      onToggleCollapse();
+    } else {
+      setIsCollapsedInternal(!isCollapsedInternal);
+    }
+  };
 
   const formatTimestamp = (timestamp: number): string => {
     // Convert from nanoseconds to milliseconds
@@ -229,9 +242,9 @@ export const LogsPanel: React.FC<LogsPanelProps> = ({ logs, spanStartTime }) => 
 
   return (
     <div className={styles.container}>
-      <div className={styles.header}>
+      <div className={cx(styles.header, css`cursor: pointer;`)} onClick={toggleCollapse}>
         <div className={styles.title}>
-          <Icon name="document-info" size="sm" className={styles.titleIcon} />
+          <Icon name={isCollapsed ? 'angle-right' : 'document-info'} size="sm" className={styles.titleIcon} />
           Related Logs ({logs.length})
         </div>
         <div className={styles.controls}>
@@ -239,69 +252,84 @@ export const LogsPanel: React.FC<LogsPanelProps> = ({ logs, spanStartTime }) => 
             name={showLabels ? 'eye' : 'eye-slash'}
             size="sm"
             tooltip={showLabels ? 'Hide labels' : 'Show labels'}
-            onClick={() => setShowLabels(!showLabels)}
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowLabels(!showLabels);
+            }}
+          />
+          <IconButton
+            name={isCollapsed ? 'angle-down' : 'angle-up'}
+            size="sm"
+            tooltip={isCollapsed ? 'Show logs' : 'Hide logs'}
+            onClick={(e) => {
+              e.stopPropagation();
+              toggleCollapse();
+            }}
           />
         </div>
       </div>
 
-      <div className={styles.logsContainer}>
-        {logs.map((log, index) => (
-          <div
-            key={index}
-            className={cx(styles.logLine, expandedLog === index && styles.expandedLine)}
-            onClick={() => setExpandedLog(expandedLog === index ? null : index)}
-          >
-            {expandedLog === index ? (
-              <>
-                <div className={styles.expandedMeta}>
-                  <span className={styles.metaItem}>
-                    <span className={styles.metaLabel}>Time:</span>
-                    {formatTimestamp(log.timestamp)}
-                  </span>
-                  <span className={styles.metaItem}>
-                    <span className={styles.metaLabel}>Relative:</span>
-                    {getRelativeTime(log.timestamp)}
-                  </span>
-                  <span className={cx(styles.levelBadge, getLevelStyle(log.level))}>{log.level || 'info'}</span>
-                </div>
-                <div className={cx(styles.message, log.level === 'error' && styles.messageError)}>{log.line}</div>
-                {showLabels && Object.keys(log.labels).length > 0 && (
-                  <div className={styles.labels}>
-                    {Object.entries(log.labels).map(([key, value]) => (
-                      <span key={key} className={styles.label}>
-                        {key}={value}
-                      </span>
-                    ))}
+      {!isCollapsed && (
+        <div className={styles.logsContainer}>
+
+          {logs.map((log, index) => (
+            <div
+              key={index}
+              className={cx(styles.logLine, expandedLog === index && styles.expandedLine)}
+              onClick={() => setExpandedLog(expandedLog === index ? null : index)}
+            >
+              {expandedLog === index ? (
+                <>
+                  <div className={styles.expandedMeta}>
+                    <span className={styles.metaItem}>
+                      <span className={styles.metaLabel}>Time:</span>
+                      {formatTimestamp(log.timestamp)}
+                    </span>
+                    <span className={styles.metaItem}>
+                      <span className={styles.metaLabel}>Relative:</span>
+                      {getRelativeTime(log.timestamp)}
+                    </span>
+                    <span className={cx(styles.levelBadge, getLevelStyle(log.level))}>{log.level || 'info'}</span>
                   </div>
-                )}
-              </>
-            ) : (
-              <>
-                <div style={{ display: 'flex', alignItems: 'center', marginRight: 8 }}>
-                  <IconButton
-                    name={copiedIndex === index ? 'check' : 'copy'}
-                    size="sm"
-                    tooltip={copiedIndex === index ? 'Copied' : 'Copy log'}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      try {
-                        navigator.clipboard.writeText(log.line);
-                        setCopiedIndex(index);
-                        window.setTimeout(() => setCopiedIndex((cur) => (cur === index ? null : cur)), 1500);
-                      } catch (err) {
-                        // ignore
-                      }
-                    }}
-                  />
-                </div>
-                <span className={styles.timestamp}>{getRelativeTime(log.timestamp)}</span>
-                <span className={cx(styles.levelBadge, getLevelStyle(log.level))}>{log.level || 'info'}</span>
-                <span className={cx(styles.message, log.level === 'error' && styles.messageError)}>{log.line}</span>
-              </>
-            )}
-          </div>
-        ))}
-      </div>
+                  <div className={cx(styles.message, log.level === 'error' && styles.messageError)}>{log.line}</div>
+                  {showLabels && Object.keys(log.labels).length > 0 && (
+                    <div className={styles.labels}>
+                      {Object.entries(log.labels).map(([key, value]) => (
+                        <span key={key} className={styles.label}>
+                          {key}={value}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  <div style={{ display: 'flex', alignItems: 'center', marginRight: 8 }}>
+                    <IconButton
+                      name={copiedIndex === index ? 'check' : 'copy'}
+                      size="sm"
+                      tooltip={copiedIndex === index ? 'Copied' : 'Copy log'}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        try {
+                          navigator.clipboard.writeText(log.line);
+                          setCopiedIndex(index);
+                          window.setTimeout(() => setCopiedIndex((cur) => (cur === index ? null : cur)), 1500);
+                        } catch (err) {
+                          // ignore
+                        }
+                      }}
+                    />
+                  </div>
+                  <span className={styles.timestamp}>{getRelativeTime(log.timestamp)}</span>
+                  <span className={cx(styles.levelBadge, getLevelStyle(log.level))}>{log.level || 'info'}</span>
+                  <span className={cx(styles.message, log.level === 'error' && styles.messageError)}>{log.line}</span>
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 };
