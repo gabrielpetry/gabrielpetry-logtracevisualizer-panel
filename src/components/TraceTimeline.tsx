@@ -439,30 +439,71 @@ export const TraceTimeline: React.FC<TraceTimelineProps> = ({
 
   return (
     <div className={styles.container} style={{ width, height }}>
+      {/* Trace Summary Header */}
+      <div className={styles.header}>
+        <div className={styles.headerLeft}>
+          <div className={styles.traceId}>
+            <Icon name="share-alt" size="sm" />
+            <span>TRACE ID: {trace.traceId}</span>
+          </div>
+          <h2 style={{ margin: 0, fontSize: '18px' }}>
+            {trace.rootSpan?.operationName || 'Trace Timeline'}
+          </h2>
+        </div>
+
+        <div style={{ display: 'flex', gap: '16px' }}>
+          <div className={styles.stat}>
+            <span className={styles.statValue}>{formatDuration(trace.duration)}</span>
+            <span className={styles.statLabel}>Total Duration</span>
+          </div>
+          <div className={styles.stat}>
+            <span className={styles.statValue}>{trace.spans.length}</span>
+            <span className={styles.statLabel}>Total Spans</span>
+          </div>
+          <div className={styles.stat}>
+            <span className={styles.statValue}>{totalLogs}</span>
+            <span className={styles.statLabel}>Total Logs</span>
+          </div>
+        </div>
+      </div>
 
       {/* Services legend */}
       {showServiceColors && (
         <div className={styles.services}>
           {trace.services.map((service) => (
             <div key={service} className={styles.serviceItem}>
-              <div className={styles.serviceColor} style={{ background: getServiceColor(service) }} />
+              <div
+                className={styles.serviceColor}
+                style={{ background: getServiceColor(service) }}
+              />
               <span>{service}</span>
             </div>
           ))}
         </div>
       )}
 
-      {/* Timeline header */}
+      {/* Timeline header/legend */}
       <div className={styles.timeline}>
-        <Icon name="clock-nine" size="sm" />
-        <span>Timeline</span>
-        <div className={styles.timelineLegend}>
+        {/* Metadata placeholder (matches SpanRow's 350px left column) */}
+        <div style={{ width: 350, overflow: 'hidden', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', flexShrink: 0, paddingRight: 16 }}>
+          <Icon name="clock-nine" size="sm" style={{ marginRight: 8 }} />
+          <span>Timeline View</span>
+        </div>
+
+        {/* The actual markers container - matches SpanRow's timeline (flex: 1) */}
+        <div className={styles.timelineLegend} style={{ marginLeft: 0 }}>
           {timeMarkers.map((marker, i) => (
             <span key={i} className={styles.timeMarker}>
               {marker}
             </span>
           ))}
         </div>
+
+        {/* Duration placeholder (matches SpanRow's 80px + 12px margin column) */}
+        {showDuration && <div style={{ width: 80, marginLeft: 12, flexShrink: 0 }} />}
+
+        {/* Tags placeholder (matches SpanRow's max 150px + 12px margin column) */}
+        <div style={{ width: 150, marginLeft: 12, flexShrink: 0 }} />
       </div>
 
       {/* Spans list */}
