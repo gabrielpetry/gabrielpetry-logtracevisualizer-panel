@@ -1,339 +1,556 @@
 import { Icon, Tooltip, useStyles2, useTheme2 } from '@grafana/ui';
+import React from 'react';
 import { css, cx } from '@emotion/css';
-import { formatDuration, getColorBySeverity, getLogSeverity, getServiceColor, isSpanFailed } from '../utils/traceUtils';
+import { formatDuration, getServiceColor } from '../utils/traceUtils';
 
 import { GrafanaTheme2 } from '@grafana/data';
-import { LogsPanel } from './LogsPanel';
-import React from 'react';
-import { SpanWithLogs } from '../types';
+import { LogLine, TraceViewSpan } from '../types';
 
 interface SpanRowProps {
-  span: SpanWithLogs;
-  traceStart: number;
-  traceDuration: number;
+  span: TraceViewSpan;
   isExpanded: boolean;
-  onToggle: () => void;
-  timelineWidth: number;
-  showServiceColors?: boolean;
-  showDuration?: boolean;
-  colorizeByLogLevel?: boolean;
-  errorColor?: string;
-  warningColor?: string;
-  infoColor?: string;
-  debugColor?: string;
-  showRelatedLogs?: boolean;
-  onToggleRelatedLogs?: () => void;
+  isActive: boolean;
+  onToggleExpand: () => void;
+  onFocus: () => void;
+  enableExploreLinks?: boolean;
+  onOpenExploreSpan?: () => void;
+  onOpenExploreLog?: (log: LogLine) => void;
 }
+
+const TREE_INDENT_STEP = 24;
+const TREE_GUTTER_BASE = 24;
 
 const getStyles = (theme: GrafanaTheme2) => ({
   container: css`
     border-bottom: 1px solid ${theme.colors.border.weak};
-    transition: all 0.15s ease;
+  `,
+  row: css`
+    display: grid;
+    grid-template-columns: minmax(240px, 36%) minmax(0, 1fr) minmax(92px, auto);
+    align-items: center;
+    gap: 12px;
+    min-height: 52px;
+    padding: 8px 12px;
+    cursor: pointer;
+    transition: background 0.12s ease, border-color 0.12s ease;
 
     &:hover {
       background: ${theme.colors.background.secondary};
     }
   `,
-  expanded: css`
-    background: ${theme.colors.background.secondary};
-  `,
-  row: css`
+  spanCell: css`
     display: flex;
+    align-items: stretch;
+    min-width: 0;
+  `,
+  treeGutter: css`
+    position: relative;
+    height: auto;
+    min-height: 100%;
+    display: inline-flex;
     align-items: center;
-    padding: 8px 12px;
-    cursor: pointer;
-    min-height: 44px;
+    justify-content: flex-end;
+    flex-shrink: 0;
+    padding-right: 4px;
   `,
-  expandIcon: css`
+  treeGuides: css`
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  `,
+  treeGuideLine: css`
+    position: absolute;
+    top: -8px;
+    bottom: -8px;
+    width: 1px;
+    background: ${theme.colors.border.weak};
+  `,
+  treeGuideBranch: css`
+    position: absolute;
+    top: 50%;
+    border-top: 1px solid ${theme.colors.border.medium};
+    transform: translateY(-50%);
+  `,
+  rowActive: css`
+    background: ${theme.colors.primary.main}14;
+    box-shadow: inset 2px 0 0 ${theme.colors.primary.main};
+  `,
+  rowFailed: css`
+    box-shadow: inset 2px 0 0 ${theme.colors.error.main};
+  `,
+  expandButton: css`
     width: 20px;
-    display: flex;
+    height: 20px;
+    display: inline-flex;
+    align-items: center;
     justify-content: center;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
     color: ${theme.colors.text.secondary};
-    transition: transform 0.15s ease;
-    flex-shrink: 0;
+    cursor: pointer;
+
+    &:hover {
+      background: ${theme.colors.background.canvas};
+      color: ${theme.colors.text.primary};
+    }
   `,
-  expandIconRotated: css`
-    transform: rotate(90deg);
-  `,
-  indent: css`
-    flex-shrink: 0;
-  `,
-  serviceIndicator: css`
-    width: 4px;
-    height: 28px;
-    border-radius: 2px;
-    margin-right: 12px;
-    flex-shrink: 0;
+  expandPlaceholder: css`
+    width: 20px;
+    height: 20px;
+    display: inline-block;
   `,
   details: css`
-    flex: 1;
-    min-width: 200px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 5px;
     overflow: hidden;
-    margin-right: 12px;
+    min-width: 0;
+  `,
+  serviceLine: css`
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  `,
+  serviceDot: css`
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+    flex-shrink: 0;
   `,
   serviceName: css`
     font-size: 11px;
     color: ${theme.colors.text.secondary};
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    margin-bottom: 2px;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  `,
-  statusDot: css`
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    margin-right: 6px;
-    flex-shrink: 0;
-    box-shadow: 0 0 0 2px ${theme.colors.background.primary};
-  `,
-  logCount: css`
-    background: ${theme.colors.primary.main}20;
-    color: ${theme.colors.primary.text};
-    padding: 1px 6px;
-    border-radius: 10px;
-    font-size: 10px;
-    font-weight: 500;
-  `,
-  severityBadge: css`
-    padding: 1px 6px;
-    border-radius: 10px;
-    font-size: 9px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.3px;
-  `,
-  operationName: css`
-    font-size: 13px;
-    font-weight: 500;
-    color: ${theme.colors.text.primary};
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   `,
+  operationName: css`
+    font-size: 13px;
+    color: ${theme.colors.text.primary};
+    font-weight: 600;
+    line-height: 1.35;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  `,
+  badges: css`
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
+    flex-shrink: 0;
+  `,
+  badge: css`
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    line-height: 1.3;
+    font-weight: 600;
+  `,
+  badgeFailed: css`
+    color: ${theme.colors.error.text};
+    background: ${theme.colors.error.main}24;
+  `,
+  badgeLogs: css`
+    color: ${theme.colors.primary.text};
+    background: ${theme.colors.primary.main}20;
+  `,
   timeline: css`
-    flex: 2;
     position: relative;
-    height: 20px;
-    background: ${theme.colors.background.primary};
+    min-width: 0;
+    height: 16px;
     border-radius: 4px;
+    background: ${theme.colors.background.canvas};
+    border: 1px solid ${theme.colors.border.weak};
     overflow: hidden;
   `,
   timelineBar: css`
     position: absolute;
-    height: 100%;
-    border-radius: 4px;
-    min-width: 3px;
-    transition: all 0.2s ease;
-
-    &:hover {
-      filter: brightness(1.15);
-      box-shadow: 0 0 8px rgba(0, 0, 0, 0.3);
-    }
+    top: 0;
+    bottom: 0;
+    border-radius: 3px;
+    min-width: 2px;
+  `,
+  timelineBarFailed: css`
+    box-shadow: 0 0 0 1px ${theme.colors.error.main}66;
+  `,
+  timelineOut: css`
+    color: ${theme.colors.text.disabled};
+    font-size: 10px;
+    text-align: center;
   `,
   duration: css`
-    width: 80px;
-    text-align: right;
     font-size: 12px;
+    color: ${theme.colors.text.secondary};
+    text-align: right;
     font-family: 'JetBrains Mono', 'Fira Code', monospace;
-    color: ${theme.colors.text.secondary};
-    flex-shrink: 0;
-    margin-left: 12px;
-  `,
-  tags: css`
-    display: flex;
-    gap: 4px;
-    margin-left: 12px;
-    flex-wrap: wrap;
-    width: 150px;
-  `,
-  tag: css`
-    padding: 2px 6px;
-    background: ${theme.colors.background.canvas};
-    border-radius: 3px;
-    font-size: 10px;
-    color: ${theme.colors.text.secondary};
-    white-space: nowrap;
-  `,
-  tagError: css`
-    background: ${theme.colors.error.main}20;
-    color: ${theme.colors.error.text};
-  `,
-  spanIdIcon: css`
-    margin-left: 6px;
-    cursor: copy;
-    color: ${theme.colors.text.disabled};
-    transition: color 0.15s ease;
     display: flex;
     align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    min-width: 0;
+  `,
+  exploreButton: css`
+    border: 1px solid ${theme.colors.border.weak};
+    background: ${theme.colors.background.primary};
+    color: ${theme.colors.text.secondary};
+    border-radius: 4px;
+    width: 22px;
+    height: 22px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
 
     &:hover {
       color: ${theme.colors.text.primary};
+      border-color: ${theme.colors.border.medium};
+      background: ${theme.colors.background.canvas};
     }
+  `,
+  expandedArea: css`
+    border-top: 1px dashed ${theme.colors.border.weak};
+    background: ${theme.colors.background.secondary};
+    padding: 10px 12px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  `,
+  sectionTitle: css`
+    font-size: 10px;
+    color: ${theme.colors.text.secondary};
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    font-weight: 700;
+  `,
+  attributes: css`
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  `,
+  attrPill: css`
+    font-size: 10px;
+    color: ${theme.colors.text.secondary};
+    border: 1px solid ${theme.colors.border.weak};
+    border-radius: 999px;
+    padding: 2px 8px;
+    background: ${theme.colors.background.primary};
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  `,
+  logs: css`
+    border: 1px solid ${theme.colors.border.weak};
+    border-radius: 6px;
+    background: ${theme.colors.background.primary};
+    overflow: hidden;
+  `,
+  logRow: css`
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'meta actions'
+      'message message';
+    gap: 8px;
+    align-items: start;
+    border-bottom: 1px solid ${theme.colors.border.weak};
+    padding: 6px 8px;
+    font-size: 12px;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+
+    &:hover {
+      background: ${theme.colors.background.canvas};
+    }
+
+    &:last-child {
+      border-bottom: none;
+    }
+  `,
+  logMeta: css`
+    grid-area: meta;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    flex-wrap: wrap;
+  `,
+  logTime: css`
+    color: ${theme.colors.text.disabled};
+    font-size: 11px;
+  `,
+  logLevel: css`
+    min-width: 52px;
+    font-size: 10px;
+    font-weight: 700;
+    border-radius: 3px;
+    text-transform: uppercase;
+    text-align: center;
+    padding: 2px 6px;
+  `,
+  levelInfo: css`
+    background: ${theme.colors.info.main}20;
+    color: ${theme.colors.info.text};
+  `,
+  levelWarn: css`
+    background: ${theme.colors.warning.main}20;
+    color: ${theme.colors.warning.text};
+  `,
+  levelError: css`
+    background: ${theme.colors.error.main}20;
+    color: ${theme.colors.error.text};
+  `,
+  levelDebug: css`
+    background: ${theme.colors.secondary.main}18;
+    color: ${theme.colors.text.secondary};
+  `,
+  logMessage: css`
+    grid-area: message;
+    color: ${theme.colors.text.primary};
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+    line-height: 1.4;
+  `,
+  logActions: css`
+    grid-area: actions;
+    display: flex;
+    gap: 6px;
+    justify-content: flex-end;
+  `,
+  noData: css`
+    font-size: 12px;
+    color: ${theme.colors.text.disabled};
+    font-style: italic;
+    padding: 2px 0;
   `,
 });
 
+function levelClass(level: LogLine['level'], styles: ReturnType<typeof getStyles>): string {
+  if (level === 'error') {
+    return styles.levelError;
+  }
+
+  if (level === 'warn') {
+    return styles.levelWarn;
+  }
+
+  if (level === 'debug' || level === 'trace') {
+    return styles.levelDebug;
+  }
+
+  return styles.levelInfo;
+}
+
+function relativeLogTime(logTimestampNs: number, spanStartUs: number): string {
+  const spanStartNs = spanStartUs * 1000;
+  const deltaMs = (logTimestampNs - spanStartNs) / 1000000;
+  const prefix = deltaMs >= 0 ? '+' : '-';
+  return `${prefix}${Math.abs(deltaMs).toFixed(2)}ms`;
+}
+
 export const SpanRow: React.FC<SpanRowProps> = ({
   span,
-  traceStart,
-  traceDuration,
   isExpanded,
-  onToggle,
-  timelineWidth,
-  showServiceColors = true,
-  showDuration = true,
-  colorizeByLogLevel = false,
-  errorColor = '#F2495C',
-  warningColor = '#FF9830',
-  infoColor = '#73BF69',
-  debugColor = '#A352CC',
-  showRelatedLogs = true,
-  onToggleRelatedLogs,
+  isActive,
+  onToggleExpand,
+  onFocus,
+  enableExploreLinks = true,
+  onOpenExploreSpan,
+  onOpenExploreLog,
 }) => {
   useTheme2();
   const styles = useStyles2(getStyles);
+
+  const depth = span.depth ?? 0;
+  const hasChildren = (span.children?.length ?? 0) > 0;
+  const hasAttrs = Object.keys(span.tags).length > 0;
+  const hasLogs = span.logs.length > 0;
+  const hasExpandableContent = hasChildren || hasAttrs || hasLogs;
+
+  const indentPx = depth * TREE_INDENT_STEP;
+  const treeGutterWidth = TREE_GUTTER_BASE + indentPx;
+  const branchStart = depth > 0 ? (depth - 1) * TREE_INDENT_STEP + TREE_GUTTER_BASE / 2 : 0;
+  const branchWidth = depth > 0 ? Math.max(10, treeGutterWidth - branchStart - 12) : 0;
+  const detailIndentPx = depth > 0 ? 6 : 0;
+  const expandedPaddingLeft = Math.min(28 + indentPx, 220);
   const serviceColor = getServiceColor(span.serviceName);
-
-  // Determine the color to use based on options
-  const spanColor = React.useMemo(() => {
-    if (colorizeByLogLevel && span.logs && span.logs.length > 0) {
-      const severity = getLogSeverity(span.logs);
-      const logColor = getColorBySeverity(severity, errorColor, warningColor, infoColor, debugColor);
-      if (logColor) {
-        return logColor;
-      }
-    }
-    // Fall back to service color if showServiceColors is enabled
-    return showServiceColors ? serviceColor : '#6B7280';
-  }, [colorizeByLogLevel, span.logs, errorColor, warningColor, infoColor, debugColor, showServiceColors, serviceColor]);
-
-  // Get log severity for badge display
-  const logSeverity = React.useMemo(() => {
-    if (colorizeByLogLevel && span.logs && span.logs.length > 0) {
-      return getLogSeverity(span.logs);
-    }
-    return 'none';
-  }, [colorizeByLogLevel, span.logs]);
-
-  // Calculate timeline bar position and width
-  const offsetPercent = ((span.startTime - traceStart) / traceDuration) * 100;
-  const widthPercent = (span.duration / traceDuration) * 100;
-
-  // Debug: log span duration raw and formatted for first span
-  React.useEffect(() => {
-    if (span.depth === 0) {
-      try {
-        console.log('SpanRow: spanId=', span.spanId, 'raw duration=', span.duration, 'formatted=', formatDuration(span.duration));
-      } catch (e) {
-        // ignore
-      }
-    }
-  }, [span]);
-
-  const depth = span.depth || 0;
-  const indentPx = depth * 24;
-  const hasLogs = span.logs && span.logs.length > 0;
-
-  // Check for error via centralized helper (tags or logs)
-  const hasError = isSpanFailed(span) || (span.logs && span.logs.some((l) => (l.level || '').toString().toLowerCase() === 'error'));
-
-  const onCopySpanId = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    navigator.clipboard.writeText(span.spanId);
-  };
+  const barColor = span.isFailed ? '#F2495C' : serviceColor;
+  const visibleWidth = Math.max((span.visibleEnd - span.visibleStart) * 100, 0.8);
+  const sortedAttributes = Object.entries(span.tags).sort(([a], [b]) => a.localeCompare(b));
 
   return (
-    <div className={cx(styles.container, isExpanded && styles.expanded)}>
-      <div className={styles.row} onClick={onToggle}>
-        {/* Metadata section (Fixed width to align with legend) */}
-        <div style={{ width: 350, display: 'flex', alignItems: 'center', flexShrink: 0, overflow: 'hidden', paddingRight: 16 }}>
-          {/* Expand Icon */}
-          <div className={cx(styles.expandIcon, isExpanded && styles.expandIconRotated)}>
-            {(hasLogs || (span.children && span.children.length > 0)) ? <Icon name="angle-right" size="md" /> : <span style={{ width: 16 }} />}
+    <div className={styles.container} data-testid="trace-span-row" data-span-id={span.spanId} data-depth={depth}>
+      <div
+        className={cx(styles.row, isActive && styles.rowActive, span.isFailed && styles.rowFailed)}
+        onClick={() => {
+          onFocus();
+          if (hasExpandableContent) {
+            onToggleExpand();
+          }
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            onFocus();
+            if (hasExpandableContent) {
+              onToggleExpand();
+            }
+          }
+        }}
+        role="button"
+        tabIndex={0}
+        aria-level={depth + 1}
+      >
+        <div className={styles.spanCell}>
+          <div className={styles.treeGutter} style={{ width: `${treeGutterWidth}px` }} aria-hidden="true">
+            {depth > 0 && (
+              <div className={styles.treeGuides}>
+                {Array.from({ length: depth }).map((_, level) => (
+                  <span
+                    key={`${span.spanId}-guide-${level}`}
+                    className={styles.treeGuideLine}
+                    style={{ left: `${TREE_GUTTER_BASE / 2 + level * TREE_INDENT_STEP}px` }}
+                  />
+                ))}
+                <span
+                  className={styles.treeGuideBranch}
+                  style={{
+                    left: `${branchStart}px`,
+                    width: `${branchWidth}px`,
+                  }}
+                />
+              </div>
+            )}
+
+            {hasExpandableContent ? (
+              <button
+                className={styles.expandButton}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onFocus();
+                  onToggleExpand();
+                }}
+                aria-label={isExpanded ? 'Collapse span' : 'Expand span'}
+              >
+                <Icon name={isExpanded ? 'angle-down' : 'angle-right'} size="sm" />
+              </button>
+            ) : (
+              <div className={styles.expandPlaceholder} />
+            )}
           </div>
 
-          {/* Indentation based on depth */}
-          <div className={styles.indent} style={{ width: indentPx }} />
-
-          {/* Service color indicator */}
-          <div className={styles.serviceIndicator} style={{
-            background: spanColor,
-            visibility: (showServiceColors || colorizeByLogLevel) ? 'visible' : 'hidden'
-          }} />
-
-          {/* Service and Operation details */}
-          <div className={styles.details} style={{ margin: 0 }}>
-            <div className={styles.serviceName}>
-              <div
-                className={styles.statusDot}
-                style={{ background: hasError ? '#F2495C' : '#3ECF8E' }}
-                title={hasError ? 'Failed span' : 'Successful span'}
-              />
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {span.serviceName}
-              </span>
-              <Tooltip content={`Click to copy Span ID: ${span.spanId}`} placement="top">
-                <div className={styles.spanIdIcon} onClick={onCopySpanId}>
-                  <Icon name="copy" size="xs" />
-                </div>
-              </Tooltip>
-              {hasLogs && <span className={styles.logCount} style={{ flexShrink: 0, marginLeft: 'auto' }}>{span.logs.length}</span>}
+          <div className={styles.details} style={{ paddingLeft: `${detailIndentPx}px` }}>
+            <div className={styles.serviceLine}>
+              <span className={styles.serviceDot} style={{ background: serviceColor }} />
+              <span className={styles.serviceName}>{span.serviceName}</span>
+              <div className={styles.badges}>
+                {span.isFailed && <span className={cx(styles.badge, styles.badgeFailed)}>FAILED</span>}
+                {hasLogs && <span className={cx(styles.badge, styles.badgeLogs)}>{span.logs.length} LOGS</span>}
+              </div>
             </div>
+
             <Tooltip content={span.operationName} placement="top">
-              <div className={styles.operationName}>{span.operationName}</div>
+              <span className={styles.operationName}>{span.operationName}</span>
             </Tooltip>
           </div>
         </div>
 
-        {/* Timeline visualization */}
-        <div className={styles.timeline} style={{ flex: 1 }}>
-          <Tooltip
-            content={
-              <div>
-                <div>
-                  <strong>{span.operationName}</strong>
-                </div>
-                <div>Duration: {formatDuration(span.duration)}</div>
-                <div>Service: {span.serviceName}</div>
-              </div>
-            }
-          >
+        <div className={styles.timeline}>
+          {span.isVisibleInWindow ? (
             <div
-              className={styles.timelineBar}
+              className={cx(styles.timelineBar, span.isFailed && styles.timelineBarFailed)}
               style={{
-                left: `${offsetPercent}%`,
-                width: `${Math.max(widthPercent, 0.5)}%`,
-                background: `linear-gradient(135deg, ${spanColor} 0%, ${spanColor}CC 100%)`,
+                left: `${span.visibleStart * 100}%`,
+                width: `${visibleWidth}%`,
+                background: barColor,
               }}
             />
-          </Tooltip>
+          ) : (
+            <div className={styles.timelineOut}>out of view</div>
+          )}
         </div>
 
-        {/* Duration */}
-        {showDuration && <div className={styles.duration}>{formatDuration(span.duration)}</div>}
-
-        {/* Tags */}
-        <div className={styles.tags}>
-          {hasError && <span className={cx(styles.tag, styles.tagError)}>error</span>}
-          {span.tags['http.method'] && <span className={styles.tag}>{String(span.tags['http.method'])}</span>}
-          {span.tags['http.status_code'] && (
-            <span className={cx(styles.tag, Number(span.tags['http.status_code']) >= 400 && styles.tagError)}>
-              {String(span.tags['http.status_code'])}
-            </span>
+        <div className={styles.duration}>
+          <span>{formatDuration(span.duration)}</span>
+          {enableExploreLinks && onOpenExploreSpan && (
+            <Tooltip content="Open span context in Explore" placement="top">
+              <button
+                className={styles.exploreButton}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onOpenExploreSpan();
+                }}
+                aria-label="Open span in Explore"
+              >
+                <Icon name="compass" size="xs" />
+              </button>
+            </Tooltip>
           )}
         </div>
       </div>
 
-      {/* Expanded logs panel */}
-      {isExpanded && hasLogs && (
-        <LogsPanel
-          logs={span.logs}
-          spanStartTime={span.startTime}
-          isCollapsed={!showRelatedLogs}
-          onToggleCollapse={onToggleRelatedLogs}
-        />
+      {isExpanded && (
+        <div
+          className={styles.expandedArea}
+          style={{ paddingLeft: `${expandedPaddingLeft}px` }}
+          data-testid="trace-span-details"
+          data-span-id={span.spanId}
+        >
+          <div>
+            <div className={styles.sectionTitle}>Attributes</div>
+            {sortedAttributes.length > 0 ? (
+              <div className={styles.attributes}>
+                {sortedAttributes.map(([key, value]) => (
+                  <span key={key} className={styles.attrPill}>
+                    {key}={String(value)}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <div className={styles.noData}>No attributes on this span.</div>
+            )}
+          </div>
+
+          <div>
+            <div className={styles.sectionTitle}>Logs</div>
+            {hasLogs ? (
+              <div className={styles.logs}>
+                {span.logs.map((log, index) => (
+                  <div className={styles.logRow} key={`${span.spanId}-${index}`} data-testid="trace-span-log-row">
+                    <div className={styles.logMeta}>
+                      <span className={styles.logTime}>{relativeLogTime(log.timestamp, span.startTime)}</span>
+                      <span className={cx(styles.logLevel, levelClass(log.level, styles))}>{log.level ?? 'info'}</span>
+                    </div>
+                    <span className={styles.logMessage}>{log.line}</span>
+                    <div className={styles.logActions}>
+                      <button
+                        className={styles.exploreButton}
+                        onClick={() => {
+                          void navigator.clipboard.writeText(log.line);
+                        }}
+                        aria-label="Copy log line"
+                      >
+                        <Icon name="copy" size="xs" />
+                      </button>
+                      {enableExploreLinks && onOpenExploreLog && (
+                        <button
+                          className={styles.exploreButton}
+                          onClick={() => onOpenExploreLog(log)}
+                          aria-label="Open log in Explore"
+                        >
+                          <Icon name="compass" size="xs" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className={styles.noData}>No correlated logs for this span.</div>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );
