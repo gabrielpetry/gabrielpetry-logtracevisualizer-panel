@@ -7,7 +7,7 @@ import { PanelProps } from '@grafana/data';
 import { SimpleOptions } from '../types';
 import { TraceTimeline } from './TraceTimeline';
 
-interface Props extends PanelProps<SimpleOptions> { }
+interface Props extends PanelProps<SimpleOptions> {}
 
 const getStyles = () => {
   return {
@@ -15,21 +15,13 @@ const getStyles = () => {
       position: relative;
       overflow: hidden;
     `,
-    loading: css`
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      height: 100%;
-      flex-direction: column;
-      gap: 16px;
-    `,
     emptyState: css`
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
       height: 100%;
-      gap: 16px;
+      gap: 12px;
       padding: 24px;
       text-align: center;
     `,
@@ -38,14 +30,15 @@ const getStyles = () => {
     `,
     emptyTitle: css`
       font-size: 18px;
-      font-weight: 500;
+      font-weight: 600;
       margin: 0;
     `,
     emptyDescription: css`
       font-size: 13px;
-      opacity: 0.7;
-      max-width: 400px;
+      opacity: 0.75;
+      max-width: 460px;
       line-height: 1.5;
+      margin: 0;
     `,
   };
 };
@@ -54,36 +47,33 @@ export const SimplePanel: React.FC<Props> = ({ options, data, width, height }) =
   useTheme2();
   const styles = useStyles2(getStyles);
 
-  // Try to parse trace and log data from the data frames
+  const durationUnit = options.durationUnit ?? 'auto';
+  const lokiTraceIdField = options.lokiTraceIdField ?? 'traceId';
+  const lokiSpanIdField = options.lokiSpanIdField ?? 'spanId';
+  const liveMode = options.liveMode ?? false;
+  const liveRefreshMs = Math.min(60000, Math.max(1000, Number(options.liveRefreshMs ?? 5000)));
+
   const { trace, logs } = useMemo(() => {
-    console.log('SimplePanel: Processing', data.series.length, 'data frames');
-    // Attempt to parse real trace data from Tempo
-    const parsedTrace = parseTraceData(data.series, options.durationUnit);
-    // Attempt to parse real log data from Loki
+    const parsedTrace = parseTraceData(data.series, durationUnit);
     const parsedLogs = parseLogData(data.series, {
-      lokiTraceIdField: options.lokiTraceIdField,
-      lokiSpanIdField: options.lokiSpanIdField,
+      lokiTraceIdField,
+      lokiSpanIdField,
     });
 
-    console.log('SimplePanel: parsedTrace', parsedTrace ? 'found' : 'not found');
-    console.log('SimplePanel: parsedLogs count:', parsedLogs.length);
-
-    // Return the parsed data (or null if no trace found)
     return {
       trace: parsedTrace,
       logs: parsedLogs,
     };
-  }, [data.series, options.lokiTraceIdField, options.lokiSpanIdField, options.durationUnit]);
+  }, [data.series, durationUnit, lokiTraceIdField, lokiSpanIdField]);
 
-  // Show empty state if there's no data and no demo mode available
   if (!trace) {
     return (
       <div className={cx(styles.wrapper, styles.emptyState)} style={{ width, height }}>
         <Icon name="gf-traces" size="xxxl" className={styles.emptyIcon} />
         <h3 className={styles.emptyTitle}>No trace data available</h3>
         <p className={styles.emptyDescription}>
-          Configure a Tempo datasource query to visualize traces, and optionally add a Loki query to
-          see correlated logs for each span.
+          This panel expects Tempo trace data and optionally Loki logs for correlation. Add a trace query,
+          then include logs with trace/span IDs to unlock the full view.
         </p>
       </div>
     );
@@ -92,21 +82,18 @@ export const SimplePanel: React.FC<Props> = ({ options, data, width, height }) =
   return (
     <div className={styles.wrapper} style={{ width, height }}>
       <TraceTimeline
+        key={`${trace.traceId}:${options.defaultSpanFilter ?? 'all'}:${options.defaultLogLevel ?? 'all'}:${liveMode}:${liveRefreshMs}`}
         trace={trace}
         logs={logs}
         width={width}
         height={height}
-        showServiceColors={options.showServiceColors}
-        showDuration={options.showDuration}
-        collapsedByDefault={options.collapsedByDefault}
-        colorizeByLogLevel={options.colorizeByLogLevel}
-        errorColor={options.errorColor}
-        warningColor={options.warningColor}
-        infoColor={options.infoColor}
-        debugColor={options.debugColor}
-        minLogLevel={options.minLogLevel}
-        spanFilter={options.spanFilter}
-        showRelatedLogs={options.showRelatedLogs}
+        defaultSpanFilter={options.defaultSpanFilter ?? 'all'}
+        defaultLogLevel={options.defaultLogLevel ?? 'all'}
+        showServiceLegend={options.showServiceLegend ?? true}
+        enableExploreLinks={options.enableExploreLinks ?? true}
+        liveMode={liveMode}
+        liveRefreshMs={liveRefreshMs}
+        dataState={data.state}
       />
     </div>
   );
