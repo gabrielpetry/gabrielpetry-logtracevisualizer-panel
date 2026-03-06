@@ -1,813 +1,928 @@
 import { DataFrame, Field } from '@grafana/data';
-import { LogLine, LogSeverity, Span, SpanWithLogs, Trace } from '../types';
+import {
+  FailureNavigationIndex,
+  LogLevel,
+  LogLevelFilter,
+  LogLine,
+  LogSeverity,
+  SelectedSpanTab,
+  Span,
+  SpanWithLogs,
+  Trace,
+  TraceViewSpan,
+  TraceWindow,
+} from '../types';
 
-/**
- * Service colors for consistent visualization
- */
 const SERVICE_COLORS = [
-  '#7B61FF', // Purple
-  '#3D71D9', // Blue
-  '#FF6B6B', // Coral
-  '#4ECB71', // Green
-  '#FFBE0B', // Yellow
-  '#00D4AA', // Teal
-  '#FF8042', // Orange
-  '#00C9FF', // Cyan
-  '#F72585', // Pink
-  '#B5179E', // Magenta
+  '#5B8FF9',
+  '#5AD8A6',
+  '#F6BD16',
+  '#E8684A',
+  '#6DC8EC',
+  '#9270CA',
+  '#FF9D4D',
+  '#269A99',
+  '#FF99C3',
+  '#7A7A7A',
 ];
 
-const serviceColorMap: Map<string, string> = new Map();
+const serviceColorMap = new Map<string, string>();
+
+const LOG_LEVEL_RANK: Record<LogLevel, number> = {
+  trace: 0,
+  debug: 1,
+  info: 2,
+  warn: 3,
+  error: 4,
+};
 
 export function getServiceColor(serviceName: string): string {
   if (serviceColorMap.has(serviceName)) {
     return serviceColorMap.get(serviceName)!;
   }
+
   const color = SERVICE_COLORS[serviceColorMap.size % SERVICE_COLORS.length];
   serviceColorMap.set(serviceName, color);
   return color;
 }
 
-/**
- * Determine the highest severity level from a list of logs
- */
+export function getLogLevelRank(level?: LogLevel | string): number {
+  const normalized = (level ?? 'info').toString().toLowerCase();
+
+  if (normalized === 'error') {
+    return LOG_LEVEL_RANK.error;
+  }
+
+  if (normalized === 'warn' || normalized === 'warning') {
+    return LOG_LEVEL_RANK.warn;
+  }
+
+  if (normalized === 'debug') {
+    return LOG_LEVEL_RANK.debug;
+  }
+
+  if (normalized === 'trace') {
+    return LOG_LEVEL_RANK.trace;
+  }
+
+  return LOG_LEVEL_RANK.info;
+}
+
 export function getLogSeverity(logs: LogLine[]): LogSeverity {
-  if (!logs || logs.length === 0) {
+  if (logs.length === 0) {
     return 'none';
   }
 
-  let hasWarning = false;
-  let hasInfo = false;
-  let hasDebug = false;
-
+  let maxRank = -1;
   for (const log of logs) {
-    const logLine = log.line.toLowerCase();
-    const level = log.level?.toLowerCase();
+    maxRank = Math.max(maxRank, getLogLevelRank(log.level));
 
-    // Check for error/critical/exception
+    const message = log.line.toLowerCase();
     if (
-      level === 'error' ||
-      level === 'critical' ||
-      level === 'fatal' ||
-      logLine.includes('error') ||
-      logLine.includes('exception') ||
-      logLine.includes('critical') ||
-      logLine.includes('fatal') ||
-      logLine.includes('crit')
+      message.includes('error') ||
+      message.includes('exception') ||
+      message.includes('critical') ||
+      message.includes('fatal') ||
+      message.includes('failed')
     ) {
-      return 'error'; // Return immediately for errors (highest priority)
-    }
-
-    // Check for warnings
-    if (level === 'warn' || level === 'warning' || logLine.includes('warn')) {
-      hasWarning = true;
-    }
-
-    // Check for info
-    if (level === 'info') {
-      hasInfo = true;
-    }
-
-    // Check for debug
-    if (level === 'debug' || level === 'trace') {
-      hasDebug = true;
+      return 'error';
     }
   }
 
-  if (hasWarning) {
+  if (maxRank >= LOG_LEVEL_RANK.error) {
+    return 'error';
+  }
+
+  if (maxRank >= LOG_LEVEL_RANK.warn) {
     return 'warning';
   }
 
-  if (hasInfo) {
+  if (maxRank >= LOG_LEVEL_RANK.info) {
     return 'info';
   }
 
-  if (hasDebug) {
-    return 'debug';
-  }
-
-  // If there are logs but no identified level, default to info
-  return 'info';
+  return 'debug';
 }
 
-/**
- * Get color for a span based on its log severity
- */
-export function getColorBySeverity(
-  severity: LogSeverity,
-  errorColor: string,
-  warningColor: string,
-  infoColor: string,
-  debugColor: string
-): string | null {
-  switch (severity) {
-    case 'error':
-      return errorColor;
-    case 'warning':
-      return warningColor;
-    case 'info':
-      return infoColor;
-    case 'debug':
-      return debugColor;
-    case 'none':
-      return null; // Fall back to service color
-  }
-}
-
-/**
- * Parse trace data from Grafana DataFrames (Tempo format)
- */
-export function parseTraceData(
-  frames: DataFrame[],
-  durationUnit: 'auto' | 'microseconds' | 'milliseconds' | 'seconds' = 'auto'
-): Trace | null {
-  // Find the trace frame
-  const traceFrame = frames.find((frame) => {
-    const hasTraceId = frame.fields.some(
-      (f) =>
-        f.name?.toLowerCase().includes('traceid') ||
-        f.name?.toLowerCase().includes('trace_id') ||
-        f.name?.toLowerCase().includes('traceid')
+function inferErrorFromTags(tags: Record<string, string | number | boolean>): boolean {
+  const statusKeys = Object.keys(tags).filter((key) => {
+    const normalized = key.toLowerCase();
+    return (
+      normalized.includes('status') ||
+      normalized.includes('status_code') ||
+      normalized.includes('status.code')
     );
-    const hasSpanId = frame.fields.some(
-      (f) =>
-        f.name?.toLowerCase().includes('spanid') ||
-        f.name?.toLowerCase().includes('span_id') ||
-        f.name?.toLowerCase().includes('spanid')
-    );
-    return hasTraceId && hasSpanId;
   });
 
-  if (!traceFrame) {
-    console.log('No trace frame found');
-    return null;
-  }
+  for (const key of statusKeys) {
+    const value = tags[key];
 
-  console.log('Found trace frame');
-  console.log('Trace frame fields:', traceFrame.fields.map((f) => ({ name: f.name, type: f.type })));
-
-  const getField = (names: string[]): Field | undefined => {
-    return traceFrame.fields.find((f) => names.some((n) => f.name?.toLowerCase().includes(n.toLowerCase())));
-  };
-
-  const traceIdField = getField(['traceid', 'trace_id']);
-  const spanIdField = getField(['spanid', 'span_id']);
-  const parentSpanIdField = getField(['parentspanid', 'parent_span_id', 'parentSpanId']);
-  const operationNameField = getField(['operationname', 'operation_name', 'name']);
-  const serviceNameField = getField(['servicename', 'service_name', 'service']);
-  const startTimeField = getField(['starttime', 'start_time', 'startTime']);
-  const durationField = getField(['duration']);
-  const tagsField = getField(['tags', 'servicetags', 'service_tags']);
-
-  if (!traceIdField || !spanIdField || !startTimeField || !durationField) {
-    console.log('Missing required fields for trace parsing');
-    return null;
-  }
-
-  const spans: Span[] = [];
-  const length = traceFrame.length;
-
-  // Determine multiplier for duration unit. If 'auto', detect from sample values.
-  let durationMultiplier = 1;
-  let detectedUnit: string | null = null;
-  if (durationUnit === 'auto') {
-    try {
-      // Check startTime magnitude first as it's the most reliable indicator
-      // Epochs:
-      // > 1e17: nanoseconds (e.g., 1.7e18)
-      // 1e14 - 1e17: microseconds (e.g., 1.7e15)
-      // 1e11 - 1e14: milliseconds (e.g., 1.7e12)
-      // < 1e11: seconds (e.g., 1.7e9)
-      const firstStartTime = Number(startTimeField.values[0]);
-
-      const samples: number[] = [];
-      for (let i = 0; i < Math.min(50, length); i++) {
-        const v = Number(durationField.values[i]);
-        if (isFinite(v) && v > 0) samples.push(v);
-      }
-
-      if (firstStartTime > 1e16) {
-        detectedUnit = 'nanoseconds (via startTime)';
-        durationMultiplier = 1 / 1000; // ns -> µs
-      } else if (firstStartTime > 1e13) {
-        detectedUnit = 'microseconds (via startTime)';
-        durationMultiplier = 1; // µs
-      } else if (firstStartTime > 1e10) {
-        detectedUnit = 'milliseconds (via startTime)';
-        durationMultiplier = 1000; // ms -> µs
-      } else if (samples.length > 0) {
-        // Fallback to duration heuristics if startTime is not a standard epoch
-        samples.sort((a, b) => a - b);
-        const mid = Math.floor(samples.length / 2);
-        const median = samples.length % 2 === 1 ? samples[mid] : (samples[mid - 1] + samples[mid]) / 2;
-
-        if (median >= 1e9) {
-          detectedUnit = 'nanoseconds (via duration)';
-          durationMultiplier = 1 / 1000;
-        } else if (median >= 1e6) {
-          detectedUnit = 'microseconds (via duration)';
-          durationMultiplier = 1;
-        } else if (median >= 1e3) {
-          detectedUnit = 'milliseconds (via duration)';
-          durationMultiplier = 1000;
-        } else {
-          detectedUnit = 'seconds (via duration)';
-          durationMultiplier = 1000000;
-        }
-      }
-      console.log('parseTraceData: auto-detected duration unit=', detectedUnit, 'multiplier=', durationMultiplier, 'startTime=', firstStartTime);
-    } catch (e) {
-      // fallback
-      durationMultiplier = 1;
-    }
-  } else {
-    if (durationUnit === 'milliseconds') durationMultiplier = 1000;
-    if (durationUnit === 'seconds') durationMultiplier = 1000000;
-    detectedUnit = durationUnit;
-  }
-
-  for (let i = 0; i < length; i++) {
-    const tags: Record<string, string | number | boolean> = {};
-
-    // Parse tags if available
-    if (tagsField) {
-      const tagsValue = tagsField.values[i];
-      if (Array.isArray(tagsValue)) {
-        tagsValue.forEach((tag: { key: string; value: string | number | boolean }) => {
-          tags[tag.key] = tag.value;
-        });
-      } else if (tagsValue && typeof tagsValue === 'object') {
-        Object.assign(tags, tagsValue);
-      }
+    if (typeof value === 'number' && value >= 400) {
+      return true;
     }
 
-    spans.push({
-      traceId: String(traceIdField.values[i]),
-      spanId: String(spanIdField.values[i]),
-      parentSpanId: parentSpanIdField ? String(parentSpanIdField.values[i] || '') : undefined,
-      operationName: operationNameField ? String(operationNameField.values[i] || 'unknown') : 'unknown',
-      serviceName: serviceNameField ? String(serviceNameField.values[i] || 'unknown') : 'unknown',
-      startTime: Number(startTimeField.values[i]) * durationMultiplier,
-      duration: Number(durationField.values[i]) * durationMultiplier,
-      tags,
-    });
-  }
+    if (typeof value === 'string') {
+      const normalized = value.toLowerCase();
+      const numeric = Number(value);
 
-  // Debug: log sample raw and converted durations to help diagnose unit issues
-  try {
-    const sampleCount = Math.min(5, spans.length);
-    const rawSamples: number[] = [];
-    const convertedSamples: number[] = [];
-    for (let i = 0; i < sampleCount; i++) {
-      rawSamples.push(Number(durationField.values[i]));
-      convertedSamples.push(Number(durationField.values[i]) * durationMultiplier);
-    }
-    console.log('parseTraceData: durationUnit=', durationUnit, 'multiplier=', durationMultiplier);
-    console.log('parseTraceData: raw durations sample=', rawSamples, 'converted (µs)=', convertedSamples);
-  } catch (e) {
-    // ignore logging errors
-  }
-
-  if (spans.length === 0) {
-    console.log('No spans found');
-    return null;
-  }
-
-  console.log('Parsed', spans.length, 'spans');
-  return buildTraceTree(spans);
-}
-
-/**
- * Build a trace tree from flat spans
- */
-export function buildTraceTree(spans: Span[]): Trace {
-  const spanMap = new Map<string, Span>();
-  spans.forEach((span) => {
-    span.children = [];
-    spanMap.set(span.spanId, span);
-  });
-
-  let rootSpan: Span | undefined;
-  const services = new Set<string>();
-
-  spans.forEach((span) => {
-    services.add(span.serviceName);
-
-    if (!span.parentSpanId || span.parentSpanId === '') {
-      rootSpan = span;
-    } else {
-      const parent = spanMap.get(span.parentSpanId);
-      if (parent) {
-        parent.children!.push(span);
-      } else {
-        // Orphan span becomes a potential root
-        if (!rootSpan) {
-          rootSpan = span;
-        }
+      if (
+        (Number.isFinite(numeric) && numeric >= 400) ||
+        normalized.includes('error') ||
+        normalized.includes('fail') ||
+        normalized.includes('exception') ||
+        normalized.includes('critical')
+      ) {
+        return true;
       }
     }
-  });
-
-  // If no root found, use the first span
-  if (!rootSpan && spans.length > 0) {
-    rootSpan = spans[0];
   }
 
-  // Calculate depths
-  const calculateDepth = (span: Span, depth: number) => {
-    span.depth = depth;
-    span.children?.forEach((child) => calculateDepth(child, depth + 1));
-  };
+  for (const key of Object.keys(tags)) {
+    const normalizedKey = key.toLowerCase();
+    const value = tags[key];
 
-  if (rootSpan) {
-    calculateDepth(rootSpan, 0);
-  }
-
-  // Calculate trace timing
-  const startTime = Math.min(...spans.map((s) => s.startTime));
-  const endTime = Math.max(...spans.map((s) => s.startTime + s.duration));
-
-  return {
-    traceId: rootSpan?.traceId || spans[0].traceId,
-    spans,
-    rootSpan,
-    startTime,
-    endTime,
-    duration: endTime - startTime,
-    services: Array.from(services),
-  };
-}
-
-/**
- * Parse log data from Grafana DataFrames (Loki format)
- */
-export function parseLogData(
-  frames: DataFrame[],
-  options?: { lokiTraceIdField?: string; lokiSpanIdField?: string }
-): LogLine[] {
-  const logs: LogLine[] = [];
-
-  for (const frame of frames) {
-    // Skip frames that don't have the right structure
-    if (frame.length === 0) {
-      continue;
-    }
-
-    // Log frame info for debugging
-    console.log('🔍 Frame analysis:');
-    console.log('  Frame length:', frame.length);
-    console.log('  Frame fields:', frame.fields.map((f) => ({ name: f.name, type: f.type })));
-    console.log('  Custom field names - trace:', options?.lokiTraceIdField, ', span:', options?.lokiSpanIdField);
-
-    // Try to find time field with multiple possible names
-    const timeField = frame.fields.find(
-      (f) =>
-        f.name?.toLowerCase().includes('time') ||
-        f.name?.toLowerCase().includes('ts') ||
-        f.name?.toLowerCase().includes('timestamp') ||
-        f.type === 'time'
-    );
-
-    // Try to find log message field with multiple possible names
-    const lineField = frame.fields.find(
-      (f) =>
-        f.name?.toLowerCase() === 'line' ||
-        f.name?.toLowerCase() === 'message' ||
-        f.name?.toLowerCase() === 'body' ||
-        f.name?.toLowerCase() === 'content' ||
-        f.name?.toLowerCase() === 'log'
-    );
-
-    // Try to find labels field
-    const labelsField = frame.fields.find((f) => f.name?.toLowerCase().includes('label'));
-
-    // Log labels structure for debugging
-    if (labelsField && frame.length > 0) {
-      console.log('  Labels at index 0:', labelsField.values[0]);
-    }
-
-    // Try to find level/severity
-    const levelField = frame.fields.find((f) => {
-      const name = f.name?.toLowerCase();
-      return name?.includes('level') || name?.includes('severity');
-    });
-
-    // Try to find trace ID - exact match first, then partial
-    const customTraceIdField = options?.lokiTraceIdField || 'traceId';
-    const traceIdField = frame.fields.find((f) => {
-      const name = f.name?.toLowerCase();
-      const customName = customTraceIdField.toLowerCase();
-      // Exact match first
-      return name === customName || name?.includes(customName) || name?.includes('traceid') || name?.includes('trace_id') || name?.includes('traceId');
-    });
-
-    // Try to find span ID - exact match first, then partial
-    const customSpanIdField = options?.lokiSpanIdField || 'spanId';
-    const spanIdField = frame.fields.find((f) => {
-      const name = f.name?.toLowerCase();
-      const customName = customSpanIdField.toLowerCase();
-      // Exact match first
-      return name === customName || name?.includes(customName) || name?.includes('spanid') || name?.includes('span_id') || name?.includes('spanId');
-    });
-
-    console.log('  ✅ Found fields:');
-    console.log('    - timeField:', timeField?.name);
-    console.log('    - lineField:', lineField?.name);
-    console.log('    - labelsField:', labelsField?.name);
-    console.log('    - traceIdField:', traceIdField?.name);
-    console.log('    - spanIdField:', spanIdField?.name);
-
-    if (!timeField || !lineField) {
-      console.log('Skipping frame - missing time or line field');
-      continue;
-    }
-
-    console.log('Processing log frame with', frame.length, 'entries');
-
-    for (let i = 0; i < frame.length; i++) {
-      const labels: Record<string, string> = {};
-
-      if (labelsField) {
-        const labelsValue = labelsField.values[i];
-        if (labelsValue && typeof labelsValue === 'object') {
-          Object.assign(labels, labelsValue);
-        }
-      }
-
-      const level = levelField?.values[i] as string | undefined;
-      let traceIdValue = traceIdField ? String(traceIdField.values[i] || '') : undefined;
-      let spanIdValue = spanIdField ? String(spanIdField.values[i] || '') : undefined;
-
-      // If trace ID not found as separate field, try to extract from labels
-      if (!traceIdValue && labels) {
-        traceIdValue = labels['trace_id'] || labels['traceId'] || labels['traceid'] || labels[customTraceIdField];
-      }
-
-      // If span ID not found as separate field, try to extract from labels
-      if (!spanIdValue && labels) {
-        spanIdValue = labels['span_id'] || labels['spanId'] || labels['spanid'] || labels[customSpanIdField];
-      }
-
-      // Log first few entries for debugging
-      if (i < 2) {
-        console.log(`  Log entry ${i}:`, {
-          traceId: traceIdValue,
-          spanId: spanIdValue,
-          line: String(lineField.values[i] || '').substring(0, 50),
-          labels,
-        });
-      }
-      logs.push({
-        timestamp: Number(timeField.values[i]),
-        line: String(lineField.values[i] || ''),
-        labels,
-        level: parseLogLevel(level || labels.level || labels.detected_level),
-        traceId: traceIdValue,
-        spanId: spanIdValue,
-      });
-    }
-  }
-
-  console.log('Parsed', logs.length, 'logs total');
-  return logs.sort((a, b) => a.timestamp - b.timestamp);
-}
-
-/**
- * Parse log level from string
- */
-function parseLogLevel(level?: string): LogLine['level'] {
-  if (!level) {
-    return 'info';
-  }
-  const l = level.toLowerCase();
-  if (l.includes('err') || l.includes('fatal') || l.includes('critical')) {
-    return 'error';
-  }
-  if (l.includes('warn')) {
-    return 'warn';
-  }
-  if (l.includes('debug')) {
-    return 'debug';
-  }
-  if (l.includes('trace')) {
-    return 'trace';
-  }
-  return 'info';
-}
-
-/**
- * Match logs to spans based on timing and trace/span IDs
- */
-export function matchLogsToSpans(trace: Trace, logs: LogLine[]): SpanWithLogs[] {
-  const flattenedSpans = flattenSpans(trace.rootSpan!);
-
-  console.log('🔗 Matching logs to spans:');
-  console.log('  Total spans:', flattenedSpans.length);
-  console.log('  Total logs:', logs.length);
-  console.log('  Trace ID:', trace.traceId);
-
-  // Show sample spans
-  if (flattenedSpans.length > 0) {
-    console.log('  Sample span 0:', {
-      traceId: flattenedSpans[0].traceId,
-      spanId: flattenedSpans[0].spanId,
-      operation: flattenedSpans[0].operationName,
-    });
-  }
-
-  // Show sample logs
-  if (logs.length > 0) {
-    console.log('  Sample log 0:', {
-      traceId: logs[0].traceId,
-      spanId: logs[0].spanId,
-      line: logs[0].line.substring(0, 50),
-    });
-  }
-
-  return flattenedSpans.map((span) => {
-    const matchingLogs = logs.filter((log) => {
-      // If log has spanId, match directly
-      if (log.spanId && log.spanId === span.spanId) {
+    if (normalizedKey.includes('error') || normalizedKey.includes('err')) {
+      if (value === true) {
         return true;
       }
 
-      // If log has traceId but no spanId, check time window
-      if (log.traceId && log.traceId === span.traceId) {
-        // Convert nanoseconds to microseconds for comparison (Loki uses ns, Tempo uses µs)
-        const logTimeMicro = log.timestamp / 1000;
-        const spanStart = span.startTime;
-        const spanEnd = span.startTime + span.duration;
-
-        // Add small buffer for timing discrepancies
-        const buffer = 1000; // 1ms buffer
-        return logTimeMicro >= spanStart - buffer && logTimeMicro <= spanEnd + buffer;
+      if (typeof value === 'string' && value.toLowerCase() === 'true') {
+        return true;
       }
 
-      return false;
-    });
-
-    if (matchingLogs.length > 0) {
-      console.log(`  ✅ Span ${span.spanId}: ${matchingLogs.length} logs matched`);
+      if (typeof value === 'string' && value.toLowerCase().includes('error')) {
+        return true;
+      }
     }
 
-    return {
-      ...span,
-      logs: matchingLogs,
-      isExpanded: false,
-    };
-  });
-}
-
-/**
- * Determine whether a span should be considered failed based on tags and values.
- * This is case-insensitive and tolerant of different tag names/values (e.g. "Status", "status", "otel.status_code", numeric codes).
- */
-export function isSpanFailed(span: Span | SpanWithLogs): boolean {
-  if (!span || !span.tags) return false;
-
-  const tags = span.tags;
-
-  // Check for common http status codes
-  const statusKeys = Object.keys(tags).filter((k) => k.toLowerCase().includes('status') || k.toLowerCase().includes('status_code') || k.toLowerCase().includes('status.code'));
-
-  for (const k of statusKeys) {
-    const v = tags[k];
-    if (typeof v === 'number' && v >= 400) return true;
-    if (typeof v === 'string') {
-      const lv = v.toLowerCase();
-      const num = Number(v);
-      if ((isFinite(num) && num >= 400) || lv.includes('error') || lv.includes('fail') || lv.includes('exception')) return true;
-    }
-  }
-
-  // Generic checks across all tags for 'error' indicators
-  for (const k of Object.keys(tags)) {
-    const v = tags[k];
-    const keyLower = k.toLowerCase();
-    if (keyLower.includes('error') || keyLower.includes('err')) {
-      if (v === true) return true;
-      if (typeof v === 'string' && v.toLowerCase() === 'true') return true;
-      if (typeof v === 'string' && v.toLowerCase().includes('error')) return true;
-    }
-    if (typeof v === 'string') {
-      const lv = v.toLowerCase();
-      if (lv.includes('error') || lv.includes('fail') || lv.includes('exception')) return true;
+    if (typeof value === 'string') {
+      const normalizedValue = value.toLowerCase();
+      if (
+        normalizedValue.includes('error') ||
+        normalizedValue.includes('fail') ||
+        normalizedValue.includes('exception') ||
+        normalizedValue.includes('critical')
+      ) {
+        return true;
+      }
     }
   }
 
   return false;
 }
 
-/**
- * Flatten spans tree into array maintaining hierarchy order
- */
+type SpanFailureCandidate = {
+  tags: Record<string, string | number | boolean>;
+  logs?: Array<
+    | LogLine
+    | {
+        timestamp: number;
+        fields: Array<{ key: string; value: string | number | boolean }>;
+      }
+  >;
+};
+
+export function isSpanFailed(span: SpanFailureCandidate): boolean {
+  if (!span || !span.tags) {
+    return false;
+  }
+
+  if (inferErrorFromTags(span.tags)) {
+    return true;
+  }
+
+  if (!span.logs || span.logs.length === 0) {
+    return false;
+  }
+
+  for (const log of span.logs) {
+    let message = '';
+    if ('line' in log && typeof log.line === 'string') {
+      message = log.line.toLowerCase();
+    } else if ('fields' in log && Array.isArray(log.fields)) {
+      message = log.fields
+        .map((field) => `${field.key}:${String(field.value)}`)
+        .join(' ')
+        .toLowerCase();
+    }
+
+    if ('level' in log && getLogLevelRank(log.level) >= LOG_LEVEL_RANK.error) {
+      return true;
+    }
+
+    if (
+      message.includes('error') ||
+      message.includes('exception') ||
+      message.includes('critical') ||
+      message.includes('fatal') ||
+      message.includes('failed')
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function parseLogLevel(level?: string): LogLevel {
+  if (!level) {
+    return 'info';
+  }
+
+  const normalized = level.toLowerCase();
+  const severityNumber = Number(normalized);
+
+  if (Number.isFinite(severityNumber)) {
+    if (severityNumber >= 17) {
+      return 'error';
+    }
+
+    if (severityNumber >= 13) {
+      return 'warn';
+    }
+
+    if (severityNumber >= 9) {
+      return 'info';
+    }
+
+    if (severityNumber >= 5) {
+      return 'debug';
+    }
+
+    return 'trace';
+  }
+
+  if (
+    normalized.includes('err') ||
+    normalized.includes('fatal') ||
+    normalized.includes('critical') ||
+    normalized.includes('crit') ||
+    normalized === 'panic'
+  ) {
+    return 'error';
+  }
+
+  if (normalized.includes('warn') || normalized.includes('notice')) {
+    return 'warn';
+  }
+
+  if (normalized.includes('debug')) {
+    return 'debug';
+  }
+
+  if (normalized.includes('trace') || normalized.includes('verbose')) {
+    return 'trace';
+  }
+
+  return 'info';
+}
+
+function readFieldValue<T>(field: Field, index: number): T | undefined {
+  const values = field.values as unknown as ArrayLike<T>;
+  return values[index];
+}
+
+function getField(frame: DataFrame, names: string[]): Field | undefined {
+  return frame.fields.find((field) => {
+    const fieldName = field.name?.toLowerCase() ?? '';
+    return names.some((name) => fieldName.includes(name.toLowerCase()));
+  });
+}
+
+function normalizeLabelKey(key: string): string {
+  return key.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function parseLabels(labelsValue: unknown): Record<string, string> {
+  if (!labelsValue || typeof labelsValue !== 'object') {
+    return {};
+  }
+
+  const labels: Record<string, string> = {};
+  for (const [key, value] of Object.entries(labelsValue as Record<string, unknown>)) {
+    if (value === null || value === undefined) {
+      continue;
+    }
+    labels[key] = String(value);
+  }
+  return labels;
+}
+
+function getLabelValue(labels: Record<string, string>, keys: string[]): string | undefined {
+  const expected = new Set(keys.map(normalizeLabelKey));
+
+  for (const [key, value] of Object.entries(labels)) {
+    if (expected.has(normalizeLabelKey(key))) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+function pickPresent(...candidates: unknown[]): unknown {
+  for (const candidate of candidates) {
+    if (candidate === null || candidate === undefined) {
+      continue;
+    }
+
+    if (typeof candidate === 'string' && candidate.trim() === '') {
+      continue;
+    }
+
+    return candidate;
+  }
+
+  return undefined;
+}
+
+function detectDurationMultiplier(
+  startTimeField: Field,
+  durationField: Field,
+  length: number,
+  durationUnit: 'auto' | 'microseconds' | 'milliseconds' | 'seconds'
+): number {
+  if (durationUnit === 'microseconds') {
+    return 1;
+  }
+
+  if (durationUnit === 'milliseconds') {
+    return 1000;
+  }
+
+  if (durationUnit === 'seconds') {
+    return 1000000;
+  }
+
+  const firstStartTime = Number(readFieldValue(startTimeField, 0));
+  if (firstStartTime > 1e16) {
+    return 1 / 1000;
+  }
+
+  if (firstStartTime > 1e13) {
+    return 1;
+  }
+
+  if (firstStartTime > 1e10) {
+    return 1000;
+  }
+
+  const samples: number[] = [];
+  for (let i = 0; i < Math.min(length, 50); i++) {
+    const value = Number(readFieldValue(durationField, i));
+    if (Number.isFinite(value) && value > 0) {
+      samples.push(value);
+    }
+  }
+
+  if (samples.length === 0) {
+    return 1;
+  }
+
+  samples.sort((a, b) => a - b);
+  const mid = Math.floor(samples.length / 2);
+  const median = samples.length % 2 === 0 ? (samples[mid - 1] + samples[mid]) / 2 : samples[mid];
+
+  if (median >= 1e9) {
+    return 1 / 1000;
+  }
+
+  if (median >= 1e6) {
+    return 1;
+  }
+
+  if (median >= 1e3) {
+    return 1000;
+  }
+
+  return 1000000;
+}
+
+export function parseTraceData(
+  frames: DataFrame[],
+  durationUnit: 'auto' | 'microseconds' | 'milliseconds' | 'seconds' = 'auto'
+): Trace | null {
+  const traceFrame = frames.find((frame) => {
+    const hasTraceId = frame.fields.some((field) => {
+      const name = field.name?.toLowerCase() ?? '';
+      return name.includes('traceid') || name.includes('trace_id');
+    });
+
+    const hasSpanId = frame.fields.some((field) => {
+      const name = field.name?.toLowerCase() ?? '';
+      return name.includes('spanid') || name.includes('span_id');
+    });
+
+    return hasTraceId && hasSpanId;
+  });
+
+  if (!traceFrame) {
+    return null;
+  }
+
+  const traceIdField = getField(traceFrame, ['traceid', 'trace_id']);
+  const spanIdField = getField(traceFrame, ['spanid', 'span_id']);
+  const parentSpanIdField = getField(traceFrame, ['parentspanid', 'parent_span_id', 'parentspan']);
+  const operationNameField = getField(traceFrame, ['operationname', 'operation_name', 'name']);
+  const serviceNameField = getField(traceFrame, ['servicename', 'service_name', 'service']);
+  const startTimeField = getField(traceFrame, ['starttime', 'start_time']);
+  const durationField = getField(traceFrame, ['duration']);
+  const tagsField = getField(traceFrame, ['tags', 'servicetags', 'service_tags', 'attributes']);
+
+  if (!traceIdField || !spanIdField || !startTimeField || !durationField) {
+    return null;
+  }
+
+  const multiplier = detectDurationMultiplier(startTimeField, durationField, traceFrame.length, durationUnit);
+
+  const spans: Span[] = [];
+  for (let i = 0; i < traceFrame.length; i++) {
+    const tags: Record<string, string | number | boolean> = {};
+    const tagsValue = tagsField ? readFieldValue<unknown>(tagsField, i) : undefined;
+
+    if (Array.isArray(tagsValue)) {
+      for (const tag of tagsValue) {
+        if (tag && typeof tag === 'object' && 'key' in tag && 'value' in tag) {
+          const key = String((tag as { key: unknown }).key);
+          const value = (tag as { value: string | number | boolean }).value;
+          tags[key] = value;
+        }
+      }
+    } else if (tagsValue && typeof tagsValue === 'object') {
+      Object.assign(tags, tagsValue as Record<string, string | number | boolean>);
+    }
+
+    const traceId = String(readFieldValue(traceIdField, i) ?? '');
+    const spanId = String(readFieldValue(spanIdField, i) ?? '');
+    const parentSpanIdRaw = parentSpanIdField ? readFieldValue(parentSpanIdField, i) : undefined;
+
+    spans.push({
+      traceId,
+      spanId,
+      parentSpanId: parentSpanIdRaw ? String(parentSpanIdRaw) : undefined,
+      operationName: String(readFieldValue(operationNameField ?? spanIdField, i) ?? 'unknown'),
+      serviceName: String(readFieldValue(serviceNameField ?? spanIdField, i) ?? 'unknown'),
+      startTime: Number(readFieldValue(startTimeField, i)) * multiplier,
+      duration: Number(readFieldValue(durationField, i)) * multiplier,
+      tags,
+    });
+  }
+
+  if (spans.length === 0) {
+    return null;
+  }
+
+  return buildTraceTree(spans);
+}
+
+export function buildTraceTree(spans: Span[]): Trace {
+  const spanMap = new Map<string, Span>();
+  for (const span of spans) {
+    span.children = [];
+    spanMap.set(span.spanId, span);
+  }
+
+  let rootSpan: Span | undefined;
+  const services = new Set<string>();
+
+  for (const span of spans) {
+    services.add(span.serviceName);
+
+    if (!span.parentSpanId) {
+      if (!rootSpan || span.startTime < rootSpan.startTime) {
+        rootSpan = span;
+      }
+      continue;
+    }
+
+    const parent = spanMap.get(span.parentSpanId);
+    if (parent) {
+      parent.children!.push(span);
+      continue;
+    }
+
+    if (!rootSpan) {
+      rootSpan = span;
+    }
+  }
+
+  if (!rootSpan) {
+    rootSpan = spans[0];
+  }
+
+  const assignDepth = (span: Span, depth: number): void => {
+    span.depth = depth;
+    for (const child of span.children ?? []) {
+      assignDepth(child, depth + 1);
+    }
+  };
+  assignDepth(rootSpan, 0);
+
+  const startTime = Math.min(...spans.map((span) => span.startTime));
+  const endTime = Math.max(...spans.map((span) => span.startTime + span.duration));
+
+  return {
+    traceId: rootSpan.traceId,
+    spans,
+    rootSpan,
+    startTime,
+    endTime,
+    duration: Math.max(1, endTime - startTime),
+    services: Array.from(services),
+  };
+}
+
+export function parseLogData(
+  frames: DataFrame[],
+  options?: { lokiTraceIdField?: string; lokiSpanIdField?: string }
+): LogLine[] {
+  const logs: LogLine[] = [];
+
+  const customTraceField = options?.lokiTraceIdField ?? 'traceId';
+  const customSpanField = options?.lokiSpanIdField ?? 'spanId';
+
+  for (const frame of frames) {
+    if (frame.length === 0) {
+      continue;
+    }
+
+    const timeField = frame.fields.find((field) => {
+      const name = field.name?.toLowerCase() ?? '';
+      return (
+        field.type === 'time' ||
+        name.includes('time') ||
+        name.includes('ts') ||
+        name.includes('timestamp')
+      );
+    });
+
+    const lineField = frame.fields.find((field) => {
+      const name = field.name?.toLowerCase() ?? '';
+      return (
+        name === 'line' ||
+        name === 'message' ||
+        name === 'body' ||
+        name === 'content' ||
+        name === 'log'
+      );
+    });
+
+    if (!timeField || !lineField) {
+      continue;
+    }
+
+    const labelsField = frame.fields.find((field) => {
+      const name = field.name?.toLowerCase() ?? '';
+      return name.includes('label');
+    });
+
+    const levelField = frame.fields.find((field) => {
+      const name = field.name?.toLowerCase() ?? '';
+      return name.includes('level') || name.includes('severity');
+    });
+
+    const traceIdField = frame.fields.find((field) => {
+      const name = field.name?.toLowerCase() ?? '';
+      return (
+        name === customTraceField ||
+        name.includes(customTraceField) ||
+        name.includes('traceid') ||
+        name.includes('trace_id')
+      );
+    });
+
+    const spanIdField = frame.fields.find((field) => {
+      const name = field.name?.toLowerCase() ?? '';
+      return (
+        name === customSpanField ||
+        name.includes(customSpanField) ||
+        name.includes('spanid') ||
+        name.includes('span_id')
+      );
+    });
+
+    for (let i = 0; i < frame.length; i++) {
+      const labelsValue = labelsField ? readFieldValue<unknown>(labelsField, i) : undefined;
+      const labels = parseLabels(labelsValue);
+
+      const levelRaw = String(
+        pickPresent(
+          levelField ? readFieldValue(levelField, i) : undefined,
+          getLabelValue(labels, [
+            'level',
+            'detected_level',
+            'detectedLevel',
+            'severity',
+            'severity_text',
+            'severityText',
+            'severity_number',
+            'severityNumber',
+            'otel_severity_text',
+            'otel.severity_text',
+            'otel_severity_number',
+            'otel.severity_number',
+            'log_level',
+            'logLevel',
+            'loglevel',
+            'lvl',
+          ]),
+          readFieldValue(lineField, i),
+          'info'
+        )
+      );
+
+      const traceIdValueRaw = traceIdField ? readFieldValue(traceIdField, i) : undefined;
+      const spanIdValueRaw = spanIdField ? readFieldValue(spanIdField, i) : undefined;
+
+      const traceIdValue =
+        traceIdValueRaw ||
+        getLabelValue(labels, [customTraceField, 'trace_id', 'traceId', 'traceid']);
+
+      const spanIdValue =
+        spanIdValueRaw || getLabelValue(labels, [customSpanField, 'span_id', 'spanId', 'spanid']);
+
+      const timestamp = Number(readFieldValue(timeField, i));
+      const line = String(readFieldValue(lineField, i) ?? '');
+
+      logs.push({
+        timestamp,
+        line,
+        labels,
+        level: parseLogLevel(levelRaw),
+        traceId: traceIdValue ? String(traceIdValue) : undefined,
+        spanId: spanIdValue ? String(spanIdValue) : undefined,
+      });
+    }
+  }
+
+  return logs.sort((a, b) => a.timestamp - b.timestamp);
+}
+
 export function flattenSpans(span: Span | undefined): Span[] {
   if (!span) {
     return [];
   }
 
   const result: Span[] = [span];
-  if (span.children) {
-    span.children.forEach((child) => {
-      result.push(...flattenSpans(child));
-    });
+  for (const child of span.children ?? []) {
+    result.push(...flattenSpans(child));
   }
+
   return result;
 }
 
-/**
- * Format duration from microseconds to human readable
- */
+export function matchLogsToSpans(trace: Trace, logs: LogLine[]): SpanWithLogs[] {
+  const flattenedSpans = flattenSpans(trace.rootSpan);
+  if (flattenedSpans.length === 0) {
+    return [];
+  }
+
+  const logsBySpanId = new Map<string, LogLine[]>();
+  const traceOnlyLogsByTraceId = new Map<string, LogLine[]>();
+
+  for (const log of logs) {
+    if (log.spanId) {
+      const bySpan = logsBySpanId.get(log.spanId) ?? [];
+      bySpan.push(log);
+      logsBySpanId.set(log.spanId, bySpan);
+      continue;
+    }
+
+    if (log.traceId) {
+      const byTrace = traceOnlyLogsByTraceId.get(log.traceId) ?? [];
+      byTrace.push(log);
+      traceOnlyLogsByTraceId.set(log.traceId, byTrace);
+    }
+  }
+
+  return flattenedSpans.map((span) => {
+    const directLogs = logsBySpanId.get(span.spanId) ?? [];
+    const traceLogs = traceOnlyLogsByTraceId.get(span.traceId) ?? [];
+
+    const start = span.startTime;
+    const end = span.startTime + span.duration;
+    const buffer = 1000; // 1ms in microseconds
+
+    const fallbackLogs = traceLogs.filter((log) => {
+      const logMicros = log.timestamp / 1000;
+      return logMicros >= start - buffer && logMicros <= end + buffer;
+    });
+
+    const matchedLogs = [...directLogs, ...fallbackLogs].sort((a, b) => a.timestamp - b.timestamp);
+
+    return {
+      ...span,
+      logs: matchedLogs,
+      isExpanded: false,
+    };
+  });
+}
+
 export function formatDuration(microseconds: number): string {
-  if (!isFinite(microseconds) || microseconds <= 0) {
+  if (!Number.isFinite(microseconds) || microseconds <= 0) {
     return '0µs';
   }
 
-  const micros = microseconds;
+  if (microseconds < 1000) {
+    return `${microseconds.toFixed(0)}µs`;
+  }
 
-  if (micros < 1000) {
-    return `${micros.toFixed(0)}µs`;
+  if (microseconds < 1000000) {
+    return `${(microseconds / 1000).toFixed(2)}ms`;
   }
-  if (micros < 1000000) {
-    return `${(micros / 1000).toFixed(2)}ms`;
-  }
-  return `${(micros / 1000000).toFixed(2)}s`;
+
+  return `${(microseconds / 1000000).toFixed(2)}s`;
 }
 
-/**
- * Format timestamp to readable time
- */
 export function formatTimestamp(timestamp: number): string {
-  const date = new Date(timestamp / 1000); // Convert from µs to ms
-  return date.toISOString().split('T')[1].replace('Z', '');
+  const date = new Date(timestamp / 1000000);
+  return date.toISOString().replace('T', ' ').replace('Z', '');
 }
 
-/**
- * Generate mock trace data for testing
- */
-export function generateMockTrace(): Trace {
-  const traceId = 'abc123def456';
-  const now = Date.now() * 1000; // Convert to microseconds
+function clampRatio(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
 
-  const spans: Span[] = [
-    {
-      traceId,
-      spanId: 'span-001',
-      operationName: 'HTTP GET /api/users',
-      serviceName: 'api-gateway',
-      startTime: now,
-      duration: 150000, // 150ms
-      tags: { 'http.method': 'GET', 'http.status_code': 200 },
-      depth: 0,
-      children: [],
-    },
-    {
-      traceId,
-      spanId: 'span-002',
-      parentSpanId: 'span-001',
-      operationName: 'authenticate',
-      serviceName: 'auth-service',
-      startTime: now + 5000,
-      duration: 25000, // 25ms
-      tags: { 'user.authenticated': true },
-      depth: 1,
-      children: [],
-    },
-    {
-      traceId,
-      spanId: 'span-003',
-      parentSpanId: 'span-001',
-      operationName: 'SELECT * FROM users',
-      serviceName: 'user-service',
-      startTime: now + 35000,
-      duration: 80000, // 80ms
-      tags: { 'db.type': 'postgresql', 'db.statement': 'SELECT' },
-      depth: 1,
-      children: [],
-    },
-    {
-      traceId,
-      spanId: 'span-004',
-      parentSpanId: 'span-003',
-      operationName: 'cache.get',
-      serviceName: 'cache-service',
-      startTime: now + 40000,
-      duration: 5000, // 5ms
-      tags: { 'cache.hit': false },
-      depth: 2,
-      children: [],
-    },
-    {
-      traceId,
-      spanId: 'span-005',
-      parentSpanId: 'span-003',
-      operationName: 'db.query',
-      serviceName: 'postgres',
-      startTime: now + 50000,
-      duration: 60000, // 60ms
-      tags: { 'db.rows_affected': 42 },
-      depth: 2,
-      children: [],
-    },
-    {
-      traceId,
-      spanId: 'span-006',
-      parentSpanId: 'span-001',
-      operationName: 'serialize response',
-      serviceName: 'api-gateway',
-      startTime: now + 120000,
-      duration: 25000, // 25ms
-      tags: { 'response.size': 1024 },
-      depth: 1,
-      children: [],
-    },
-  ];
+export function clampWindow(window: TraceWindow, minWidth = 0.02): TraceWindow {
+  let start = Number.isFinite(window.start) ? window.start : 0;
+  let end = Number.isFinite(window.end) ? window.end : 1;
 
-  // Build the tree
-  const spanMap = new Map<string, Span>();
-  spans.forEach((s) => {
-    s.children = [];
-    spanMap.set(s.spanId, s);
-  });
+  if (start > end) {
+    const temp = start;
+    start = end;
+    end = temp;
+  }
 
-  spans.forEach((s) => {
-    if (s.parentSpanId) {
-      const parent = spanMap.get(s.parentSpanId);
-      if (parent) {
-        parent.children!.push(s);
-      }
+  start = clampRatio(start);
+  end = clampRatio(end);
+
+  if (end - start < minWidth) {
+    const center = (start + end) / 2;
+    start = center - minWidth / 2;
+    end = center + minWidth / 2;
+  }
+
+  if (start < 0) {
+    end -= start;
+    start = 0;
+  }
+
+  if (end > 1) {
+    start -= end - 1;
+    end = 1;
+  }
+
+  start = clampRatio(start);
+  end = clampRatio(end);
+
+  if (end - start < minWidth) {
+    if (start === 0) {
+      end = Math.min(1, minWidth);
+    } else if (end === 1) {
+      start = Math.max(0, 1 - minWidth);
     }
-  });
+  }
 
   return {
-    traceId,
-    spans,
-    rootSpan: spans[0],
-    startTime: now,
-    endTime: now + 150000,
-    duration: 150000,
-    services: ['api-gateway', 'auth-service', 'user-service', 'cache-service', 'postgres'],
+    start,
+    end,
   };
 }
 
-/**
- * Generate mock log data for testing
- */
-export function generateMockLogs(trace: Trace): LogLine[] {
-  const logs: LogLine[] = [];
+export function zoomWindow(window: TraceWindow, factor: number, anchor = 0.5, minWidth = 0.02): TraceWindow {
+  const clampedWindow = clampWindow(window, minWidth);
+  if (!Number.isFinite(factor) || factor <= 0) {
+    return clampedWindow;
+  }
 
-  const flatSpans = flattenSpans(trace.rootSpan);
+  const currentWidth = clampedWindow.end - clampedWindow.start;
+  const nextWidth = Math.max(minWidth, Math.min(1, currentWidth * factor));
+  const normalizedAnchor = clampRatio(anchor);
+  const anchorValue = clampedWindow.start + currentWidth * normalizedAnchor;
 
-  flatSpans.forEach((span) => {
-    // Add 1-3 logs per span
-    const numLogs = Math.floor(Math.random() * 3) + 1;
-    const spanStartNs = span.startTime * 1000;
-    const spanDurationNs = span.duration * 1000;
+  const nextStart = anchorValue - nextWidth * normalizedAnchor;
+  const nextEnd = nextStart + nextWidth;
 
-    for (let i = 0; i < numLogs; i++) {
-      const offset = (spanDurationNs / (numLogs + 1)) * (i + 1);
-      const levels: Array<LogLine['level']> = ['info', 'debug', 'warn', 'error'];
-      const level = levels[Math.floor(Math.random() * 4)];
+  return clampWindow({ start: nextStart, end: nextEnd }, minWidth);
+}
 
-      const messages: Record<string, string[]> = {
-        info: [
-          `Processing request for ${span.operationName}`,
-          `Operation completed successfully`,
-          `Handling span ${span.spanId}`,
-        ],
-        debug: [
-          `Entering ${span.operationName}`,
-          `Debug context: service=${span.serviceName}`,
-          `Span attributes: ${JSON.stringify(span.tags)}`,
-        ],
-        warn: [
-          `Slow operation detected in ${span.serviceName}`,
-          `Rate limit approaching threshold`,
-          `Retry attempt #2 for ${span.operationName}`,
-        ],
-        error: [
-          `Failed to process ${span.operationName}`,
-          `Connection timeout to upstream`,
-          `Error in ${span.serviceName}: Resource not found`,
-        ],
-      };
+export function panWindow(window: TraceWindow, delta: number): TraceWindow {
+  const clampedWindow = clampWindow(window, 0.001);
+  const width = clampedWindow.end - clampedWindow.start;
 
-      const messageOptions = messages[level || 'info'];
-      const message = messageOptions[Math.floor(Math.random() * messageOptions.length)];
+  let start = clampedWindow.start + delta;
+  let end = clampedWindow.end + delta;
 
-      logs.push({
-        timestamp: spanStartNs + offset,
-        line: `[${new Date((spanStartNs + offset) / 1000000).toISOString()}] ${level?.toUpperCase()} ${span.serviceName}: ${message}`,
-        labels: {
-          service: span.serviceName,
-          level: level || 'info',
-        },
-        level,
-        traceId: span.traceId,
-        spanId: span.spanId,
-      });
-    }
+  if (start < 0) {
+    end -= start;
+    start = 0;
+  }
+
+  if (end > 1) {
+    start -= end - 1;
+    end = 1;
+  }
+
+  return clampWindow({ start, end }, width);
+}
+
+function isLogLevelAllowed(level: LogLevel | undefined, minLevel: LogLevelFilter): boolean {
+  if (minLevel === 'all') {
+    return true;
+  }
+
+  return getLogLevelRank(level) >= getLogLevelRank(minLevel);
+}
+
+export function buildTraceViewSpans(
+  spans: SpanWithLogs[],
+  traceStart: number,
+  traceDuration: number,
+  window: TraceWindow,
+  minLogLevel: LogLevelFilter
+): TraceViewSpan[] {
+  const safeWindow = clampWindow(window);
+  const windowStartUs = traceStart + traceDuration * safeWindow.start;
+  const windowEndUs = traceStart + traceDuration * safeWindow.end;
+  const windowDurationUs = Math.max(1, windowEndUs - windowStartUs);
+
+  return spans.map((span) => {
+    const logs = span.logs.filter((log) => isLogLevelAllowed(log.level, minLogLevel));
+
+    const spanStart = span.startTime;
+    const spanEnd = span.startTime + span.duration;
+
+    const intersectsWindow = spanEnd >= windowStartUs && spanStart <= windowEndUs;
+
+    const visibleStartUs = Math.max(windowStartUs, spanStart);
+    const visibleEndUs = Math.min(windowEndUs, spanEnd);
+
+    const visibleStart = intersectsWindow
+      ? clampRatio((visibleStartUs - windowStartUs) / windowDurationUs)
+      : 0;
+    const visibleEnd = intersectsWindow
+      ? clampRatio((visibleEndUs - windowStartUs) / windowDurationUs)
+      : 0;
+
+    const failed = isSpanFailed({ tags: span.tags, logs });
+
+    return {
+      ...span,
+      logs,
+      isFailed: failed,
+      maxLogSeverity: getLogSeverity(logs),
+      visibleStart,
+      visibleEnd,
+      isVisibleInWindow: intersectsWindow,
+    };
   });
+}
 
-  return logs.sort((a, b) => a.timestamp - b.timestamp);
+export function deriveSelectedSpanTabs(
+  spans: TraceViewSpan[],
+  selectedSpanIds: string[]
+): SelectedSpanTab[] {
+  const spanMap = new Map<string, TraceViewSpan>();
+  for (const span of spans) {
+    spanMap.set(span.spanId, span);
+  }
+
+  const tabs: SelectedSpanTab[] = [];
+  for (const spanId of selectedSpanIds) {
+    const span = spanMap.get(spanId);
+    if (!span) {
+      continue;
+    }
+
+    tabs.push({
+      spanId,
+      title: span.operationName,
+      serviceName: span.serviceName,
+      isFailed: span.isFailed,
+      logCount: span.logs.length,
+      logs: span.logs,
+      span,
+    });
+  }
+
+  return tabs;
+}
+
+export function buildFailureNavigationIndex(
+  failedSpanIds: string[],
+  focusedSpanId?: string
+): FailureNavigationIndex {
+  const orderedFailedSpanIds = Array.from(new Set(failedSpanIds));
+
+  let currentIndex = -1;
+  if (focusedSpanId) {
+    currentIndex = orderedFailedSpanIds.indexOf(focusedSpanId);
+  }
+
+  return {
+    orderedFailedSpanIds,
+    currentIndex,
+    hasPrevious: currentIndex > 0,
+    hasNext: currentIndex >= 0 ? currentIndex < orderedFailedSpanIds.length - 1 : orderedFailedSpanIds.length > 0,
+  };
 }
