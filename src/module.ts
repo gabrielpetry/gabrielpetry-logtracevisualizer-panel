@@ -4,62 +4,10 @@ import { SimplePanel } from './components/SimplePanel';
 
 export const plugin = new PanelPlugin<SimpleOptions>(SimplePanel).setPanelOptions((builder) => {
   return builder
-    .addBooleanSwitch({
-      path: 'showDuration',
-      name: 'Show duration',
-      description: 'Display duration for each span',
-      defaultValue: true,
-    })
-    .addBooleanSwitch({
-      path: 'showServiceColors',
-      name: 'Show service colors',
-      description: 'Color-code spans by service',
-      defaultValue: true,
-    })
-    .addBooleanSwitch({
-      path: 'collapsedByDefault',
-      name: 'Collapse logs by default',
-      description: 'Whether log panels should be collapsed initially',
-      defaultValue: true,
-    })
-    .addBooleanSwitch({
-      path: 'colorizeByLogLevel',
-      name: 'Colorize by log level',
-      description: 'Override span colors based on log severity (error, warning, info)',
-      defaultValue: false,
-    })
-    .addColorPicker({
-      path: 'errorColor',
-      name: 'Error color',
-      description: 'Color for spans with ERROR, CRITICAL, or EXCEPTION logs',
-      defaultValue: '#F2495C',
-      showIf: (config) => config.colorizeByLogLevel,
-    })
-    .addColorPicker({
-      path: 'warningColor',
-      name: 'Warning color',
-      description: 'Color for spans with WARNING or WARN logs',
-      defaultValue: '#FF9830',
-      showIf: (config) => config.colorizeByLogLevel,
-    })
-    .addColorPicker({
-      path: 'infoColor',
-      name: 'Info color',
-      description: 'Color for spans with INFO logs (no errors or warnings)',
-      defaultValue: '#73BF69',
-      showIf: (config) => config.colorizeByLogLevel,
-    })
-    .addColorPicker({
-      path: 'debugColor',
-      name: 'Debug color',
-      description: 'Color for spans with DEBUG logs only',
-      defaultValue: '#A352CC',
-      showIf: (config) => config.colorizeByLogLevel,
-    })
     .addRadio({
       path: 'durationUnit',
       name: 'Duration unit',
-      description: 'Unit of the duration field in your trace data (or Auto-detect)',
+      description: 'Unit of the duration field in trace data.',
       defaultValue: 'auto',
       settings: {
         options: [
@@ -73,35 +21,72 @@ export const plugin = new PanelPlugin<SimpleOptions>(SimplePanel).setPanelOption
     .addTextInput({
       path: 'lokiTraceIdField',
       name: 'Loki trace ID field',
-      description: 'Field name in Loki logs containing the trace ID',
+      description: 'Field name in Loki logs containing trace ID.',
       defaultValue: 'traceId',
     })
     .addTextInput({
       path: 'lokiSpanIdField',
       name: 'Loki span ID field',
-      description: 'Field name in Loki logs containing the span ID',
+      description: 'Field name in Loki logs containing span ID.',
       defaultValue: 'spanId',
     })
-    .addTextInput({
-      path: 'minLogLevel',
-      name: 'Minimum log level (supports variables)',
-      description:
-        'Filter logs shown in the panel to this minimum severity (All shows every log). Allowed values: all, error, warn, info, debug, trace. You can use Grafana variables such as ${var}',
+    .addRadio({
+      path: 'defaultSpanFilter',
+      name: 'Default span filter',
+      description: 'Initial span filter shown in the toolbar.',
       defaultValue: 'all',
+      settings: {
+        options: [
+          { value: 'all', label: 'All spans' },
+          { value: 'failed', label: 'Failed spans only' },
+        ],
+      },
     })
-    .addTextInput({
-      path: 'spanFilter',
-      name: 'Span filter by success (supports variables)',
-      description:
-        'Control which spans are shown based on their success status. Allowed values: all, failed, successful. You can use Grafana variables such as ${var}',
+    .addRadio({
+      path: 'defaultLogLevel',
+      name: 'Default log level filter',
+      description: 'Initial minimum log level for correlated logs.',
       defaultValue: 'all',
-    });
-
-    // Toggle to show/hide related logs by default
-    builder.addBooleanSwitch({
-      path: 'showRelatedLogs',
-      name: 'Show related logs',
-      description: 'When off, related logs panels for spans will be hidden. Can still toggle at runtime.',
+      settings: {
+        options: [
+          { value: 'all', label: 'All logs' },
+          { value: 'error', label: 'Error' },
+          { value: 'warn', label: 'Warn' },
+          { value: 'info', label: 'Info' },
+          { value: 'debug', label: 'Debug' },
+          { value: 'trace', label: 'Trace' },
+        ],
+      },
+    })
+    .addBooleanSwitch({
+      path: 'showServiceLegend',
+      name: 'Show service legend',
+      description: 'Display service color legend above the timeline list.',
       defaultValue: true,
+    })
+    .addBooleanSwitch({
+      path: 'enableExploreLinks',
+      name: 'Enable Explore links',
+      description: 'Show actions that open selected span/log context in Grafana Explore.',
+      defaultValue: true,
+    })
+    .addBooleanSwitch({
+      path: 'liveMode',
+      name: 'Live mode (auto refresh)',
+      description: 'Automatically refresh queries at a fixed interval.',
+      defaultValue: false,
+    })
+    .addNumberInput({
+      path: 'liveRefreshMs',
+      name: 'Live refresh interval (ms)',
+      description: 'Refresh interval used when Live mode is enabled.',
+      defaultValue: 5000,
+      settings: {
+        integer: true,
+        min: 1000,
+        max: 60000,
+        step: 1000,
+      },
+      showIf: (config) => config.liveMode,
     });
 });
