@@ -1,117 +1,83 @@
 # Log & Trace Visualizer Panel for Grafana
 
-This is a custom Grafana panel plugin for visualizing logs and traces together, designed to work with both Loki (logs) and Tempo (traces) datasources. It enables you to correlate logs and traces in a single panel for enhanced observability.
+A Grafana panel plugin that correlates Tempo spans and Loki logs in one view.
 
-## Features
+## V2 Highlights
 
-- Visualize logs and traces side by side
-- Correlate log lines with trace spans
-- Interactive timeline for trace navigation
+- Single scrollable span list with gantt bars
+- Inline nested span details (logs + metadata pills) on expand
+- Failure-first workflow with failed-only toggle and next/previous failed span navigation
+- Timeline controls for fit, zoom, and pan
+- Optional "Open in Explore" actions for span and log context
 
-## Requirements
+## Data Requirements
 
-This panel requires **two queries** to function properly:
+Use panel queries that return:
 
-1. **Loki query**: For logs data
-2. **Tempo query**: For traces data
+1. Trace spans (Tempo)
+2. Optional logs (Loki) with trace/span identifiers
 
-Both queries must be configured in the panel's query editor. The panel expects the first query to return logs (from Loki) and the second to return traces (from Tempo).
+The panel automatically matches logs to spans using:
 
-## Getting Started
+- direct span ID match when available
+- fallback trace ID + timestamp window match when span ID is missing
 
-### Development
+## Clean-Break V2 Options
 
-1. Install dependencies:
-   ```bash
-   npm install
-   ```
-2. Start development mode:
-   ```bash
-   npm run dev
-   ```
-3. Build for production:
-   ```bash
-   npm run build
-   ```
-4. Run tests:
-   ```bash
-   npm run test
-   npm run test:ci
-   ```
-5. Run Grafana with the plugin (Docker):
-   ```bash
-   npm run server
-   ```
-6. Run E2E tests:
-   ```bash
-   npm run e2e
-   ```
-7. Lint code:
+This release is a **clean break** from V1 panel options.
 
-   ```bash
-   npm run lint
-   npm run lint:fix
-   ```
+Active options:
 
-8. Run the linter
+- `durationUnit`
+- `lokiTraceIdField`
+- `lokiSpanIdField`
+- `defaultSpanFilter` (`all` or `failed`)
+- `defaultLogLevel` (`all`, `error`, `warn`, `info`, `debug`, `trace`)
+- `showServiceLegend`
+- `enableExploreLinks`
+- `liveMode`
+- `liveRefreshMs`
 
-   ```bash
-   npm run lint
+`liveMode` uses Grafana dashboard refresh events under the hood (panel-driven auto refresh), and the header shows live/refresh state.
+You can also start/stop live refresh at runtime from the panel toolbar with the `Start live` / `Stop live` button, without changing saved panel settings.
 
-   # or
+Removed V1 options:
 
-   npm run lint:fix
-   ```
+- `collapsedByDefault`
+- `colorizeByLogLevel`
+- `errorColor`, `warningColor`, `infoColor`, `debugColor`
+- `spanFilter` (replaced by `defaultSpanFilter`)
+- `minLogLevel` (replaced by `defaultLogLevel`)
+- `showRelatedLogs`
 
-# Distributing your plugin
+## Development
 
-When distributing a Grafana plugin either within the community or privately the plugin must be signed so the Grafana application can verify its authenticity. This can be done with the `@grafana/sign-plugin` package.
+```bash
+npm install
+npm run dev
+```
 
-_Note: It's not necessary to sign a plugin during development. The docker development environment that is scaffolded with `@grafana/create-plugin` caters for running the plugin without a signature._
+Quality checks:
 
-## Initial steps
+```bash
+npm run typecheck
+npm run lint
+npm run test:ci
+```
 
-Before signing a plugin please read the Grafana [plugin publishing and signing criteria](https://grafana.com/legal/plugins/#plugin-publishing-and-signing-criteria) documentation carefully.
+Run local Grafana with Docker:
 
-`@grafana/create-plugin` has added the necessary commands and workflows to make signing and distributing a plugin via the grafana plugins catalog as straightforward as possible.
+```bash
+npm run server
+```
 
-Before signing a plugin for the first time please consult the Grafana [plugin signature levels](https://grafana.com/legal/plugins/#what-are-the-different-classifications-of-plugins) documentation to understand the differences between the types of signature level.
+Run Playwright e2e tests:
 
-1. Create a [Grafana Cloud account](https://grafana.com/signup).
-2. Make sure that the first part of the plugin ID matches the slug of your Grafana Cloud account.
-   - _You can find the plugin ID in the `plugin.json` file inside your plugin directory. For example, if your account slug is `acmecorp`, you need to prefix the plugin ID with `acmecorp-`._
-3. Create a Grafana Cloud API key with the `PluginPublisher` role.
-4. Keep a record of this API key as it will be required for signing a plugin
+```bash
+npm run e2e
+```
 
-## Signing a plugin
+## Notes
 
-### Using Github actions release workflow
-
-If the plugin is using the github actions supplied with `@grafana/create-plugin` signing a plugin is included out of the box. The [release workflow](./.github/workflows/release.yml) can prepare everything to make submitting your plugin to Grafana as easy as possible. Before being able to sign the plugin however a secret needs adding to the Github repository.
-
-1. Please navigate to "settings > secrets > actions" within your repo to create secrets.
-2. Click "New repository secret"
-3. Name the secret "GRAFANA_API_KEY"
-4. Paste your Grafana Cloud API key in the Secret field
-5. Click "Add secret"
-
-#### Push a version tag
-
-To trigger the workflow we need to push a version tag to github. This can be achieved with the following steps:
-
-1. Run `npm version <major|minor|patch>`
-2. Run `git push origin main --follow-tags`
-
-## Learn more
-
-Below you can find source code for existing app plugins and other related documentation.
-
-- [Basic panel plugin example](https://github.com/grafana/grafana-plugin-examples/tree/master/examples/panel-basic#readme)
-- [`plugin.json` documentation](https://grafana.com/developers/plugin-tools/reference/plugin-json)
-- [How to sign a plugin?](https://grafana.com/developers/plugin-tools/publish-a-plugin/sign-a-plugin)
-
-## Example
-
-Below is an example screenshot of the panel in action, showing logs and traces visualized together:
-
-![Log & Trace Visualizer Example](assets/screenshot.png)
+- Plugin ID and plugin type are unchanged.
+- If `plugin.json` is updated in a future change, restart Grafana server to pick up metadata changes.
