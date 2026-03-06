@@ -1,28 +1,23 @@
-// Panel options
+export type DurationUnit = 'auto' | 'microseconds' | 'milliseconds' | 'seconds';
+export type LogLevel = 'info' | 'warn' | 'error' | 'debug' | 'trace';
+export type LogLevelFilter = 'all' | LogLevel;
+export type SpanFilter = 'all' | 'failed';
+
+// Panel options (V2)
 export interface SimpleOptions {
-  showDuration: boolean;
-  showServiceColors: boolean;
-  collapsedByDefault: boolean;
-  colorizeByLogLevel: boolean;
-  errorColor: string;
-  warningColor: string;
-  infoColor: string;
-  debugColor: string;
-  lokiTraceIdField: string;
-  lokiSpanIdField: string;
-  durationUnit?: 'auto' | 'microseconds' | 'milliseconds' | 'seconds';
-  // Dynamic log level filter for displayed logs inside the panel
-  minLogLevel?: 'all' | 'error' | 'warn' | 'info' | 'debug' | 'trace';
-  // Filter spans by success status: all, only failed, or only successful
-  spanFilter?: 'all' | 'failed' | 'successful';
-  // Whether to show related logs by default (can also be toggled at runtime)
-  showRelatedLogs?: boolean;
+  durationUnit?: DurationUnit;
+  lokiTraceIdField?: string;
+  lokiSpanIdField?: string;
+  defaultSpanFilter?: SpanFilter;
+  defaultLogLevel?: LogLevelFilter;
+  showServiceLegend?: boolean;
+  enableExploreLinks?: boolean;
+  liveMode?: boolean;
+  liveRefreshMs?: number;
 }
 
-// Log severity levels for coloring
 export type LogSeverity = 'error' | 'warning' | 'info' | 'debug' | 'none';
 
-// Span represents a single span in a trace
 export interface Span {
   traceId: string;
   spanId: string;
@@ -37,23 +32,20 @@ export interface Span {
   depth?: number;
 }
 
-// SpanLog represents a log entry within a span
 export interface SpanLog {
   timestamp: number;
   fields: Array<{ key: string; value: string | number | boolean }>;
 }
 
-// LogLine from Loki
 export interface LogLine {
   timestamp: number; // nanoseconds
   line: string;
   labels: Record<string, string>;
-  level?: 'info' | 'warn' | 'error' | 'debug' | 'trace';
+  level?: LogLevel;
   traceId?: string;
   spanId?: string;
 }
 
-// Trace is a collection of spans
 export interface Trace {
   traceId: string;
   spans: Span[];
@@ -64,8 +56,46 @@ export interface Trace {
   services: string[];
 }
 
-// Combined view state - omits original logs from Span and uses LogLine[] instead
 export interface SpanWithLogs extends Omit<Span, 'logs'> {
   logs: LogLine[];
   isExpanded: boolean;
+}
+
+export interface TraceWindow {
+  start: number; // 0..1
+  end: number; // 0..1
+}
+
+export interface TraceViewSpan extends SpanWithLogs {
+  isFailed: boolean;
+  maxLogSeverity: LogSeverity;
+  visibleStart: number;
+  visibleEnd: number;
+  isVisibleInWindow: boolean;
+}
+
+export interface TraceViewState {
+  selectedSpanIds: string[];
+  focusedSpanId?: string;
+  expandedSpanIds: string[];
+  spanFilter: SpanFilter;
+  minLogLevel: LogLevelFilter;
+  window: TraceWindow;
+}
+
+export interface FailureNavigationIndex {
+  orderedFailedSpanIds: string[];
+  currentIndex: number;
+  hasPrevious: boolean;
+  hasNext: boolean;
+}
+
+export interface SelectedSpanTab {
+  spanId: string;
+  title: string;
+  serviceName: string;
+  isFailed: boolean;
+  logCount: number;
+  logs: LogLine[];
+  span: TraceViewSpan;
 }
