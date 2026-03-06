@@ -1,29 +1,33 @@
 import { Icon, useStyles2, useTheme2 } from '@grafana/ui';
-import { LogLine, Trace } from '../types';
-import React, { useMemo, useState } from 'react';
-import { formatDuration, getServiceColor, isSpanFailed, matchLogsToSpans } from '../utils/traceUtils';
+import React, { useEffect, useMemo, useState } from 'react';
+import { css, cx } from '@emotion/css';
+import {
+  buildFailureNavigationIndex,
+  buildTraceViewSpans,
+  formatDuration,
+  getServiceColor,
+  matchLogsToSpans,
+  panWindow,
+  zoomWindow,
+} from '../utils/traceUtils';
 
-import { GrafanaTheme2 } from '@grafana/data';
+import { GrafanaTheme2, LoadingState } from '@grafana/data';
+import { LogLevelFilter, LogLine, SpanFilter, Trace, TraceViewSpan, TraceWindow } from '../types';
 import { SpanRow } from './SpanRow';
-import { css } from '@emotion/css';
-import { getTemplateSrv } from '@grafana/runtime';
+import { RefreshEvent, getAppEvents } from '@grafana/runtime';
 
 interface TraceTimelineProps {
   trace: Trace;
   logs: LogLine[];
   width: number;
   height: number;
-  showServiceColors?: boolean;
-  showDuration?: boolean;
-  collapsedByDefault?: boolean;
-  colorizeByLogLevel?: boolean;
-  errorColor?: string;
-  warningColor?: string;
-  infoColor?: string;
-  debugColor?: string;
-  minLogLevel?: 'all' | 'error' | 'warn' | 'info' | 'debug' | 'trace';
-  spanFilter?: 'all' | 'failed' | 'successful';
-  showRelatedLogs?: boolean;
+  defaultSpanFilter?: SpanFilter;
+  defaultLogLevel?: LogLevelFilter;
+  showServiceLegend?: boolean;
+  enableExploreLinks?: boolean;
+  liveMode?: boolean;
+  liveRefreshMs?: number;
+  dataState?: LoadingState;
 }
 
 const getStyles = (theme: GrafanaTheme2) => ({
@@ -32,356 +36,441 @@ const getStyles = (theme: GrafanaTheme2) => ({
     flex-direction: column;
     height: 100%;
     background: ${theme.colors.background.primary};
+    border: 1px solid ${theme.colors.border.weak};
     border-radius: 8px;
     overflow: hidden;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
   `,
-  header: css`
-    display: flex;
+  toolbar: css`
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 12px;
     align-items: center;
-    justify-content: space-between;
-    padding: 16px 20px;
-    background: linear-gradient(135deg, ${theme.colors.background.secondary} 0%, ${theme.colors.background.canvas} 100%);
+    padding: 10px 12px;
     border-bottom: 1px solid ${theme.colors.border.weak};
+    background: linear-gradient(135deg, ${theme.colors.background.secondary} 0%, ${theme.colors.background.primary} 100%);
   `,
-  headerLeft: css`
+  titleSection: css`
     display: flex;
     flex-direction: column;
+    min-width: 0;
     gap: 4px;
   `,
-  traceId: css`
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 11px;
-    color: ${theme.colors.text.secondary};
-  `,
-  stat: css`
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    padding: 8px 16px;
-    background: ${theme.colors.background.primary};
-    border-radius: 8px;
-  `,
-  statValue: css`
-    font-size: 20px;
-    font-weight: 600;
+  traceTitle: css`
+    margin: 0;
+    font-size: 14px;
+    font-weight: 700;
     color: ${theme.colors.text.primary};
-    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   `,
-  statLabel: css`
-    font-size: 10px;
+  traceId: css`
     color: ${theme.colors.text.secondary};
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    font-size: 11px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
   `,
-  timeline: css`
+  metrics: css`
     display: flex;
     align-items: center;
-    padding: 8px 20px;
-    background: ${theme.colors.background.canvas};
-    border-bottom: 1px solid ${theme.colors.border.weak};
     gap: 8px;
+  `,
+  metric: css`
+    border: 1px solid ${theme.colors.border.weak};
+    border-radius: 6px;
+    padding: 4px 8px;
     font-size: 11px;
     color: ${theme.colors.text.secondary};
+    background: ${theme.colors.background.primary};
   `,
-  timelineLegend: css`
-    flex: 1;
+  metricFailed: css`
+    color: ${theme.colors.error.text};
+    border-color: ${theme.colors.error.main}66;
+    background: ${theme.colors.error.main}16;
+  `,
+  metricLive: css`
+    color: ${theme.colors.success.text};
+    border-color: ${theme.colors.success.main}66;
+    background: ${theme.colors.success.main}14;
+  `,
+  metricLoading: css`
+    color: ${theme.colors.warning.text};
+    border-color: ${theme.colors.warning.main}66;
+    background: ${theme.colors.warning.main}14;
+  `,
+  controls: css`
     display: flex;
-    justify-content: space-between;
-    margin-left: 310px;
-  `,
-  timeMarker: css`
-    font-family: 'JetBrains Mono', 'Fira Code', monospace;
-    color: ${theme.colors.text.disabled};
-  `,
-  services: css`
-    display: flex;
-    gap: 12px;
+    gap: 8px;
+    align-items: center;
     flex-wrap: wrap;
-    padding: 12px 20px;
-    background: ${theme.colors.background.secondary};
-    border-bottom: 1px solid ${theme.colors.border.weak};
+    justify-content: flex-end;
   `,
-  serviceItem: css`
-    display: flex;
+  input: css`
+    border: 1px solid ${theme.colors.border.weak};
+    background: ${theme.colors.background.primary};
+    color: ${theme.colors.text.primary};
+    border-radius: 4px;
+    padding: 5px 8px;
+    height: 28px;
+    font-size: 12px;
+    min-width: 180px;
+
+    &:focus {
+      outline: none;
+      border-color: ${theme.colors.primary.main};
+    }
+  `,
+  select: css`
+    border: 1px solid ${theme.colors.border.weak};
+    background: ${theme.colors.background.primary};
+    color: ${theme.colors.text.primary};
+    border-radius: 4px;
+    padding: 5px 8px;
+    height: 28px;
+    font-size: 12px;
+  `,
+  button: css`
+    border: 1px solid ${theme.colors.border.weak};
+    border-radius: 4px;
+    height: 28px;
+    padding: 0 8px;
+    background: ${theme.colors.background.primary};
+    color: ${theme.colors.text.secondary};
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    display: inline-flex;
     align-items: center;
     gap: 6px;
-    font-size: 12px;
-    color: ${theme.colors.text.secondary};
-    cursor: pointer;
-    padding: 4px 8px;
-    border-radius: 4px;
-    transition: all 0.15s ease;
 
     &:hover {
+      color: ${theme.colors.text.primary};
+      border-color: ${theme.colors.border.medium};
       background: ${theme.colors.background.canvas};
     }
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
   `,
-  serviceColor: css`
-    width: 10px;
-    height: 10px;
+  buttonActive: css`
+    border-color: ${theme.colors.primary.main};
+    color: ${theme.colors.primary.text};
+    background: ${theme.colors.primary.main}18;
+  `,
+  legend: css`
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 8px 12px;
+    border-bottom: 1px solid ${theme.colors.border.weak};
+    background: ${theme.colors.background.secondary};
+  `,
+  legendItem: css`
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: ${theme.colors.text.secondary};
+    border: 1px solid ${theme.colors.border.weak};
+    border-radius: 999px;
+    padding: 2px 8px;
+    background: ${theme.colors.background.primary};
+  `,
+  legendSwatch: css`
+    width: 8px;
+    height: 8px;
     border-radius: 2px;
   `,
-  spansContainer: css`
-    flex: 1;
-    overflow-y: auto;
-    overflow-x: hidden;
-
-    &::-webkit-scrollbar {
-      width: 8px;
-    }
-
-    &::-webkit-scrollbar-track {
-      background: ${theme.colors.background.secondary};
-    }
-
-    &::-webkit-scrollbar-thumb {
-      background: ${theme.colors.border.medium};
-      border-radius: 4px;
-
-      &:hover {
-        background: ${theme.colors.border.strong};
-      }
-    }
+  timelineHeader: css`
+    display: grid;
+    grid-template-columns: minmax(240px, 36%) minmax(0, 1fr) minmax(92px, auto);
+    align-items: center;
+    gap: 12px;
+    padding: 6px 12px;
+    border-bottom: 1px solid ${theme.colors.border.weak};
+    background: ${theme.colors.background.canvas};
+    font-size: 11px;
+    color: ${theme.colors.text.secondary};
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
   `,
-  emptyState: css`
+  markers: css`
+    display: flex;
+    justify-content: space-between;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 10px;
+    color: ${theme.colors.text.disabled};
+  `,
+  content: css`
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  `,
+  list: css`
+    flex: 1;
+    overflow: auto;
+  `,
+  empty: css`
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    height: 100%;
+    gap: 8px;
     color: ${theme.colors.text.secondary};
-    gap: 16px;
-  `,
-  emptyIcon: css`
-    color: ${theme.colors.text.disabled};
-    opacity: 0.5;
-  `,
-  emptyText: css`
-    font-size: 16px;
-    font-weight: 500;
-  `,
-  emptySubtext: css`
-    font-size: 13px;
-    color: ${theme.colors.text.disabled};
+    min-height: 180px;
+    padding: 24px;
     text-align: center;
-    max-width: 400px;
   `,
 });
+
+function matchesSearch(span: TraceViewSpan, searchTerm: string): boolean {
+  if (!searchTerm) {
+    return true;
+  }
+
+  const query = searchTerm.toLowerCase();
+  return (
+    span.operationName.toLowerCase().includes(query) ||
+    span.serviceName.toLowerCase().includes(query) ||
+    span.spanId.toLowerCase().includes(query)
+  );
+}
+
+function buildExploreUrl(queryText: string): string {
+  const leftState = {
+    range: {
+      from: 'now-1h',
+      to: 'now',
+    },
+    queries: [
+      {
+        refId: 'A',
+        query: queryText,
+      },
+    ],
+  };
+
+  return `/explore?left=${encodeURIComponent(JSON.stringify(leftState))}`;
+}
 
 export const TraceTimeline: React.FC<TraceTimelineProps> = ({
   trace,
   logs,
   width,
   height,
-  showServiceColors = true,
-  showDuration = true,
-  collapsedByDefault = true,
-  colorizeByLogLevel = false,
-  errorColor = '#F2495C',
-  warningColor = '#FF9830',
-  infoColor = '#73BF69',
-  debugColor = '#A352CC',
-  minLogLevel = 'all',
-  spanFilter = 'all',
-  showRelatedLogs = true,
+  defaultSpanFilter = 'all',
+  defaultLogLevel = 'all',
+  showServiceLegend = true,
+  enableExploreLinks = true,
+  liveMode = false,
+  liveRefreshMs = 5000,
+  dataState = LoadingState.Done,
 }) => {
   useTheme2();
   const styles = useStyles2(getStyles);
 
-  // Debug: log trace duration raw and formatted
-  React.useEffect(() => {
-    try {
-      console.log('TraceTimeline: trace.duration raw =', trace.duration);
-      console.log('TraceTimeline: trace.duration formatted =', formatDuration(trace.duration));
-      if (trace.spans && trace.spans.length > 0) {
-        const sample = trace.spans.slice(0, 5).map((s) => ({ spanId: s.spanId, raw: s.duration, formatted: formatDuration(s.duration) }));
-        console.log('TraceTimeline: span duration samples =', sample);
-      }
-    } catch (e) {
-      // ignore
+  const [spanFilter, setSpanFilter] = useState<SpanFilter>(defaultSpanFilter);
+  const [minLogLevel, setMinLogLevel] = useState<LogLevelFilter>(defaultLogLevel);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [windowRange, setWindowRange] = useState<TraceWindow>({ start: 0, end: 1 });
+  const [expandedSpanIds, setExpandedSpanIds] = useState<Set<string>>(() => {
+    const initial = new Set<string>();
+    if (trace.rootSpan?.spanId) {
+      initial.add(trace.rootSpan.spanId);
     }
-  }, [trace]);
-  // Process spans with logs
-  const rawSpansWithLogs = useMemo(() => matchLogsToSpans(trace, logs), [trace, logs]);
-
-  // Helper to rank log levels
-  const levelRank = (level?: LogLine['level'] | string): number => {
-    switch ((level || 'info').toString().toLowerCase()) {
-      case 'error':
-        return 4;
-      case 'warn':
-      case 'warning':
-        return 3;
-      case 'info':
-        return 2;
-      case 'debug':
-        return 1;
-      case 'trace':
-        return 0;
-      default:
-        return 2;
-    }
-  };
-  // Compute a key based on current template variables so we can depend on variable changes
-  const [templateVarsKey, setTemplateVarsKey] = React.useState<string>('');
-  React.useEffect(() => {
-    const compute = () => {
-      try {
-        const vars = getTemplateSrv().getVariables() || [];
-        const key = JSON.stringify(
-          vars.map((v: any) => {
-            const cur = v.current;
-            return (cur && (cur.text ?? cur.value)) || v.name || null;
-          })
-        );
-        setTemplateVarsKey(key);
-      } catch (e) {
-        // ignore
-      }
-    };
-    compute();
-    const id = window.setInterval(compute, 1000);
-    return () => window.clearInterval(id);
-  }, []);
-
-  // Resolve variables in inputs (support Grafana variables like ${var}) and react to template changes
-  const resolvedMinLogLevel = React.useMemo((): string => {
-    try {
-      const raw = typeof minLogLevel === 'string' ? minLogLevel : String(minLogLevel || 'all');
-      return getTemplateSrv().replace(raw).toString().trim().toLowerCase();
-    } catch (e) {
-      return (minLogLevel || 'all').toString().trim().toLowerCase();
-    }
-  }, [minLogLevel, templateVarsKey]);
-
-  const resolvedSpanFilter = React.useMemo((): string => {
-    try {
-      const raw = typeof spanFilter === 'string' ? spanFilter : String(spanFilter || 'all');
-      return getTemplateSrv().replace(raw).toString().trim().toLowerCase();
-    } catch (e) {
-      return (spanFilter || 'all').toString().trim().toLowerCase();
-    }
-  }, [spanFilter, templateVarsKey]);
-
-  const minRank = (() => {
-    switch (resolvedMinLogLevel) {
-      case 'error':
-        return 4;
-      case 'warn':
-        return 3;
-      case 'info':
-        return 2;
-      case 'debug':
-        return 1;
-      case 'trace':
-        return 0;
-      default:
-        return -1; // 'all' -> include everything
-    }
-  })();
-
-  // Use centralized helper to determine if a span is failed; also consider error logs
-  const spanHasError = (span: typeof rawSpansWithLogs[0]) => {
-    const tagBased = isSpanFailed(span as any);
-    const hasErrorLog = span.logs && span.logs.some((l) => (l.level || '').toString().toLowerCase() === 'error');
-    return tagBased || hasErrorLog;
-  };
-
-  // Apply min log level filtering and span success filter
-  const spansWithLogs = useMemo(() => {
-    const filtered = rawSpansWithLogs.map((s) => {
-      const logsFiltered = minRank >= 0 ? s.logs.filter((l) => levelRank(l.level) >= minRank) : s.logs.slice();
-      return {
-        ...s,
-        logs: logsFiltered,
-      };
-    });
-
-    if (!resolvedSpanFilter || resolvedSpanFilter === 'all') return filtered;
-    if (resolvedSpanFilter === 'failed') return filtered.filter((s) => spanHasError(s));
-    if (resolvedSpanFilter === 'successful') return filtered.filter((s) => !spanHasError(s));
-    return filtered;
-  }, [rawSpansWithLogs, resolvedMinLogLevel, resolvedSpanFilter, templateVarsKey, trace.rootSpan?.spanId]);
-
-  // Ensure the root span is always present in the spans list even if filters removed it
-  const spansWithLogsEnsuringRoot = useMemo(() => {
-    if (!trace.rootSpan) return spansWithLogs;
-    const rootId = trace.rootSpan.spanId;
-    const found = spansWithLogs.find((s) => s.spanId === rootId);
-    if (found) return spansWithLogs;
-
-    // Try to find root in raw spans and add it (apply same log filtering rules)
-    const rawRoot = rawSpansWithLogs.find((s) => s.spanId === rootId);
-    if (!rawRoot) return spansWithLogs;
-
-    const logsFiltered = minRank >= 0 ? rawRoot.logs.filter((l) => levelRank(l.level) >= minRank) : rawRoot.logs.slice();
-    const rootWithLogs = { ...rawRoot, logs: logsFiltered };
-    return [rootWithLogs, ...spansWithLogs];
-  }, [spansWithLogs, rawSpansWithLogs, trace.rootSpan?.spanId, resolvedMinLogLevel, resolvedSpanFilter, templateVarsKey]);
-
-  // Ensure root is present in the canonical spans list
-  const finalSpans = spansWithLogsEnsuringRoot;
-
-  // Track expanded spans
-  const [expandedSpans, setExpandedSpans] = useState<Set<string>>(new Set());
-
-  // Runtime toggle to show/hide related logs per-span (defaults from option)
-  const [showLogsBySpan, setShowLogsBySpan] = useState<Set<string>>(() => {
-    const init = new Set<string>();
-    if (showRelatedLogs) {
-      rawSpansWithLogs.forEach((s) => {
-        if (s.logs && s.logs.length > 0) init.add(s.spanId);
-      });
-    }
-    return init;
+    return initial;
   });
+  const [focusedSpanId, setFocusedSpanId] = useState<string | undefined>(undefined);
+  const [liveEnabled, setLiveEnabled] = useState<boolean>(liveMode);
 
-  // Initialize expanded state when a new trace loads, but preserve user toggles across data refreshes
-  const prevTraceIdRef = React.useRef<string | undefined>(undefined);
-  React.useEffect(() => {
-    const rootId = trace.rootSpan?.spanId;
-    if (prevTraceIdRef.current === trace.traceId) {
-      return; // same trace ID — preserve current expanded state
-    }
-    prevTraceIdRef.current = trace.traceId;
-
-    if (collapsedByDefault) {
-      const init = new Set<string>();
-      if (rootId) init.add(rootId);
-      setExpandedSpans(init);
-    } else {
-      // If not collapsed by default, expand spans that have logs (and ensure root is expanded)
-      const init = new Set(finalSpans.filter((s) => s.logs.length > 0).map((s) => s.spanId));
-      if (rootId) init.add(rootId);
-      setExpandedSpans(init);
-    }
-  }, [trace.traceId, collapsedByDefault, finalSpans, trace.rootSpan?.spanId]);
-
-  // Helper to collect all descendant spanIds for a given span
-  const collectDescendantIds = (spanId: string, map: Map<string, typeof finalSpans[0]>, out: Set<string>) => {
-    const span = map.get(spanId);
-    if (!span || !span.children) {
+  useEffect(() => {
+    if (!liveEnabled) {
       return;
     }
-    for (const child of span.children) {
-      out.add(child.spanId);
-      collectDescendantIds(child.spanId, map, out);
+
+    const timerId = window.setInterval(() => {
+      getAppEvents().publish(new RefreshEvent());
+    }, liveRefreshMs);
+
+    return () => {
+      window.clearInterval(timerId);
+    };
+  }, [liveEnabled, liveRefreshMs]);
+
+  const spansWithLogs = useMemo(() => matchLogsToSpans(trace, logs), [trace, logs]);
+
+  const viewSpans = useMemo(() => {
+    return buildTraceViewSpans(
+      spansWithLogs,
+      trace.startTime,
+      trace.duration,
+      windowRange,
+      minLogLevel
+    );
+  }, [spansWithLogs, trace.startTime, trace.duration, windowRange, minLogLevel]);
+
+  const spanMap = useMemo(() => {
+    const map = new Map<string, TraceViewSpan>();
+    for (const span of viewSpans) {
+      map.set(span.spanId, span);
     }
+    return map;
+  }, [viewSpans]);
+
+  const filteredIds = useMemo(() => {
+    const selected = new Set<string>();
+
+    for (const span of viewSpans) {
+      if (spanFilter === 'failed' && !span.isFailed) {
+        continue;
+      }
+
+      if (!matchesSearch(span, searchTerm)) {
+        continue;
+      }
+
+      selected.add(span.spanId);
+
+      let parentId = span.parentSpanId;
+      while (parentId) {
+        selected.add(parentId);
+        parentId = spanMap.get(parentId)?.parentSpanId;
+      }
+    }
+
+    if (selected.size === 0 && trace.rootSpan?.spanId) {
+      selected.add(trace.rootSpan.spanId);
+    }
+
+    return selected;
+  }, [viewSpans, spanFilter, searchTerm, spanMap, trace.rootSpan]);
+
+  const filteredSpans = useMemo(() => viewSpans.filter((span) => filteredIds.has(span.spanId)), [viewSpans, filteredIds]);
+
+  const visibleSpans = useMemo(() => {
+    const visibilityCache = new Map<string, boolean>();
+
+    const isVisible = (span: TraceViewSpan): boolean => {
+      if (!filteredIds.has(span.spanId)) {
+        return false;
+      }
+
+      const cached = visibilityCache.get(span.spanId);
+      if (cached !== undefined) {
+        return cached;
+      }
+
+      if (!span.parentSpanId) {
+        visibilityCache.set(span.spanId, true);
+        return true;
+      }
+
+      const parent = spanMap.get(span.parentSpanId);
+      if (!parent) {
+        visibilityCache.set(span.spanId, true);
+        return true;
+      }
+
+      if (!expandedSpanIds.has(parent.spanId)) {
+        visibilityCache.set(span.spanId, false);
+        return false;
+      }
+
+      const parentVisible = isVisible(parent);
+      visibilityCache.set(span.spanId, parentVisible);
+      return parentVisible;
+    };
+
+    return filteredSpans.filter((span) => isVisible(span));
+  }, [filteredSpans, filteredIds, spanMap, expandedSpanIds]);
+
+  const failedSpanIds = useMemo(() => filteredSpans.filter((span) => span.isFailed).map((span) => span.spanId), [filteredSpans]);
+
+  const failureNavigation = useMemo(
+    () => buildFailureNavigationIndex(failedSpanIds, focusedSpanId),
+    [failedSpanIds, focusedSpanId]
+  );
+
+  const timeMarkers = useMemo(() => {
+    const steps = 4;
+    const markers: string[] = [];
+    for (let i = 0; i <= steps; i++) {
+      const ratio = windowRange.start + (windowRange.end - windowRange.start) * (i / steps);
+      markers.push(formatDuration(trace.duration * ratio));
+    }
+    return markers;
+  }, [windowRange, trace.duration]);
+
+  const focusAbsoluteRatio = useMemo(() => {
+    if (!focusedSpanId) {
+      return 0.5;
+    }
+
+    const focusedSpan = spanMap.get(focusedSpanId);
+    if (!focusedSpan) {
+      return 0.5;
+    }
+
+    const center = focusedSpan.startTime + focusedSpan.duration / 2;
+    const absolute = (center - trace.startTime) / trace.duration;
+    return Math.max(0, Math.min(1, absolute));
+  }, [focusedSpanId, spanMap, trace.startTime, trace.duration]);
+
+  const zoomAnchor = useMemo(() => {
+    const currentWidth = Math.max(0.001, windowRange.end - windowRange.start);
+    return (focusAbsoluteRatio - windowRange.start) / currentWidth;
+  }, [focusAbsoluteRatio, windowRange.start, windowRange.end]);
+
+  const expandAncestors = (spanId: string): void => {
+    setExpandedSpanIds((current) => {
+      const next = new Set(current);
+      let parentId = spanMap.get(spanId)?.parentSpanId;
+      while (parentId) {
+        next.add(parentId);
+        parentId = spanMap.get(parentId)?.parentSpanId;
+      }
+      return next;
+    });
   };
 
-  const toggleSpan = (spanId: string) => {
-    setExpandedSpans((prev) => {
-      const next = new Set(prev);
+  const selectFailure = (direction: 'next' | 'previous'): void => {
+    const failures = failureNavigation.orderedFailedSpanIds;
+    if (failures.length === 0) {
+      return;
+    }
+
+    let nextIndex = failureNavigation.currentIndex;
+
+    if (nextIndex === -1) {
+      nextIndex = direction === 'next' ? 0 : failures.length - 1;
+    } else if (direction === 'next') {
+      nextIndex = Math.min(failures.length - 1, nextIndex + 1);
+    } else {
+      nextIndex = Math.max(0, nextIndex - 1);
+    }
+
+    const targetSpanId = failures[nextIndex];
+    expandAncestors(targetSpanId);
+    setExpandedSpanIds((current) => {
+      const next = new Set(current);
+      next.add(targetSpanId);
+      return next;
+    });
+    setFocusedSpanId(targetSpanId);
+  };
+
+  const toggleExpand = (spanId: string): void => {
+    setExpandedSpanIds((current) => {
+      const next = new Set(current);
       if (next.has(spanId)) {
-        // collapsing: also remove all descendants so they stay collapsed when hidden
         next.delete(spanId);
-        const spanMap = new Map(finalSpans.map((s) => [s.spanId, s]));
-        const toRemove = new Set<string>();
-        collectDescendantIds(spanId, spanMap, toRemove);
-        toRemove.forEach((id) => next.delete(id));
       } else {
         next.add(spanId);
       }
@@ -389,145 +478,204 @@ export const TraceTimeline: React.FC<TraceTimelineProps> = ({
     });
   };
 
-  const toggleLogsForSpan = (spanId: string) => {
-    setShowLogsBySpan((prev) => {
-      const next = new Set(prev);
-      if (next.has(spanId)) next.delete(spanId);
-      else next.add(spanId);
-      return next;
-    });
+  const openExplore = (query: string): void => {
+    if (!enableExploreLinks) {
+      return;
+    }
+
+    const url = buildExploreUrl(query);
+    window.open(url, '_blank', 'noopener,noreferrer');
   };
 
-  // Calculate timeline width based on panel width
-  const timelineWidth = Math.max(200, width - 500);
-
-  // Build a map of spans for ancestor checks
-  const spanMap = useMemo(() => new Map(finalSpans.map((s) => [s.spanId, s])), [finalSpans]);
-
-  // Determine which spans should be visible based on expanded parents
-  const visibleSpans = useMemo(() => {
-    const visible: typeof finalSpans = [];
-
-    const isSpanVisible = (span: typeof finalSpans[0]): boolean => {
-      if (!span.parentSpanId) return true; // root-level spans always visible
-      const parent = spanMap.get(span.parentSpanId);
-      if (!parent) return true;
-      // parent must be visible and expanded
-      if (!isSpanVisible(parent)) return false;
-      return expandedSpans.has(parent.spanId);
-    };
-
-    for (const s of finalSpans) {
-      if (isSpanVisible(s)) visible.push(s);
-    }
-    return visible;
-  }, [finalSpans, spanMap, expandedSpans]);
-
-  // Calculate time markers
-  const timeMarkers = useMemo(() => {
-    const markers = [];
-    const steps = 5;
-    for (let i = 0; i <= steps; i++) {
-      const time = (trace.duration / steps) * i;
-      markers.push(formatDuration(time));
-    }
-    return markers;
-  }, [trace.duration]);
-
-  // Count logs per span
-  const totalLogs = logs.length;
+  const panStep = Math.max(0.02, (windowRange.end - windowRange.start) * 0.2);
+  const isStreaming = dataState === LoadingState.Streaming;
+  const isLoading = dataState === LoadingState.Loading;
+  const liveStatusText = liveEnabled
+    ? isStreaming
+      ? 'Live stream'
+      : isLoading
+        ? 'Refreshing…'
+        : `Auto ${Math.round(liveRefreshMs / 1000)}s`
+    : 'Live off';
 
   return (
     <div className={styles.container} style={{ width, height }}>
-      {/* Trace Summary Header */}
-      <div className={styles.header}>
-        <div className={styles.headerLeft}>
-          <div className={styles.traceId}>
-            <Icon name="share-alt" size="sm" />
-            <span>TRACE ID: {trace.traceId}</span>
+      <div className={styles.toolbar}>
+        <div className={styles.titleSection}>
+          <h3 className={styles.traceTitle}>{trace.rootSpan?.operationName ?? 'Trace Timeline'}</h3>
+          <span className={styles.traceId}>trace_id={trace.traceId}</span>
+          <div className={styles.metrics}>
+            <span className={styles.metric}>{formatDuration(trace.duration)}</span>
+            <span className={styles.metric}>{trace.spans.length} spans</span>
+            <span className={styles.metric}>{logs.length} logs</span>
+            <span
+              className={cx(
+                styles.metric,
+                liveEnabled ? (isStreaming ? styles.metricLive : isLoading ? styles.metricLoading : undefined) : undefined
+              )}
+              data-testid="trace-live-indicator"
+            >
+              {liveStatusText}
+            </span>
+            <span className={cx(styles.metric, styles.metricFailed)} data-testid="trace-failed-count">
+              {failedSpanIds.length} failed
+            </span>
           </div>
-          <h2 style={{ margin: 0, fontSize: '18px' }}>
-            {trace.rootSpan?.operationName || 'Trace Timeline'}
-          </h2>
         </div>
 
-        <div style={{ display: 'flex', gap: '16px' }}>
-          <div className={styles.stat}>
-            <span className={styles.statValue}>{formatDuration(trace.duration)}</span>
-            <span className={styles.statLabel}>Total Duration</span>
-          </div>
-          <div className={styles.stat}>
-            <span className={styles.statValue}>{trace.spans.length}</span>
-            <span className={styles.statLabel}>Total Spans</span>
-          </div>
-          <div className={styles.stat}>
-            <span className={styles.statValue}>{totalLogs}</span>
-            <span className={styles.statLabel}>Total Logs</span>
-          </div>
+        <div className={styles.controls}>
+          <input
+            className={styles.input}
+            placeholder="Search service, operation, or span ID"
+            value={searchTerm}
+            onChange={(event) => setSearchTerm(event.target.value)}
+            aria-label="Search spans"
+          />
+
+          <select
+            className={styles.select}
+            value={minLogLevel}
+            onChange={(event) => setMinLogLevel(event.target.value as LogLevelFilter)}
+            aria-label="Log level filter"
+          >
+            <option value="all">Logs: all</option>
+            <option value="error">Logs: error+</option>
+            <option value="warn">Logs: warn+</option>
+            <option value="info">Logs: info+</option>
+            <option value="debug">Logs: debug+</option>
+            <option value="trace">Logs: trace+</option>
+          </select>
+
+          <button
+            className={cx(styles.button, spanFilter === 'failed' && styles.buttonActive)}
+            onClick={() => setSpanFilter((current) => (current === 'all' ? 'failed' : 'all'))}
+            data-testid="trace-failed-toggle"
+          >
+            <Icon name="exclamation-triangle" size="xs" />
+            Failed only
+          </button>
+
+          <button
+            className={cx(styles.button, liveEnabled && styles.buttonActive)}
+            onClick={() => setLiveEnabled((current) => !current)}
+            data-testid="trace-live-toggle"
+          >
+            {liveEnabled ? 'Stop live' : 'Start live'}
+          </button>
+
+          <button
+            className={styles.button}
+            onClick={() => selectFailure('previous')}
+            disabled={!failureNavigation.hasPrevious && failureNavigation.currentIndex !== -1}
+            data-testid="trace-failure-prev"
+          >
+            <Icon name="angle-left" size="xs" />
+            Prev fail
+          </button>
+
+          <button
+            className={styles.button}
+            onClick={() => selectFailure('next')}
+            disabled={!failureNavigation.hasNext && failureNavigation.currentIndex !== -1}
+            data-testid="trace-failure-next"
+          >
+            Next fail
+            <Icon name="angle-right" size="xs" />
+          </button>
+
+          <button
+            className={styles.button}
+            onClick={() => setWindowRange({ start: 0, end: 1 })}
+            data-testid="trace-window-fit"
+          >
+            Fit
+          </button>
+
+          <button
+            className={styles.button}
+            onClick={() => setWindowRange((current) => zoomWindow(current, 0.75, zoomAnchor))}
+            data-testid="trace-window-zoom-in"
+          >
+            +
+          </button>
+
+          <button
+            className={styles.button}
+            onClick={() => setWindowRange((current) => zoomWindow(current, 1.3, zoomAnchor))}
+            data-testid="trace-window-zoom-out"
+          >
+            -
+          </button>
+
+          <button
+            className={styles.button}
+            onClick={() => setWindowRange((current) => panWindow(current, -panStep))}
+            data-testid="trace-window-pan-left"
+          >
+            <Icon name="angle-left" size="xs" />
+          </button>
+
+          <button
+            className={styles.button}
+            onClick={() => setWindowRange((current) => panWindow(current, panStep))}
+            data-testid="trace-window-pan-right"
+          >
+            <Icon name="angle-right" size="xs" />
+          </button>
         </div>
       </div>
 
-      {/* Services legend */}
-      {showServiceColors && (
-        <div className={styles.services}>
+      {showServiceLegend && (
+        <div className={styles.legend}>
           {trace.services.map((service) => (
-            <div key={service} className={styles.serviceItem}>
-              <div
-                className={styles.serviceColor}
-                style={{ background: getServiceColor(service) }}
-              />
-              <span>{service}</span>
-            </div>
+            <span className={styles.legendItem} key={service}>
+              <span className={styles.legendSwatch} style={{ background: getServiceColor(service) }} />
+              {service}
+            </span>
           ))}
         </div>
       )}
 
-      {/* Timeline header/legend */}
-      <div className={styles.timeline}>
-        {/* Metadata placeholder (matches SpanRow's 350px left column) */}
-        <div style={{ width: 350, overflow: 'hidden', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', flexShrink: 0, paddingRight: 16 }}>
-          <Icon name="clock-nine" size="sm" style={{ marginRight: 8 }} />
-          <span>Timeline View</span>
-        </div>
-
-        {/* The actual markers container - matches SpanRow's timeline (flex: 1) */}
-        <div className={styles.timelineLegend} style={{ marginLeft: 0 }}>
-          {timeMarkers.map((marker, i) => (
-            <span key={i} className={styles.timeMarker}>
+      <div className={styles.timelineHeader}>
+        <span>Span tree</span>
+        <div className={styles.markers}>
+          {timeMarkers.map((marker, index) => (
+            <span key={`${marker}-${index}`} data-testid={`trace-marker-${index}`}>
               {marker}
             </span>
           ))}
         </div>
-
-        {/* Duration placeholder (matches SpanRow's 80px + 12px margin column) */}
-        {showDuration && <div style={{ width: 80, marginLeft: 12, flexShrink: 0 }} />}
-
-        {/* Tags placeholder (matches SpanRow's max 150px + 12px margin column) */}
-        <div style={{ width: 150, marginLeft: 12, flexShrink: 0 }} />
+        <span style={{ textAlign: 'right' }}>Duration</span>
       </div>
 
-      {/* Spans list */}
-      <div className={styles.spansContainer}>
-        {visibleSpans.map((span) => (
-          <SpanRow
-            key={span.spanId}
-            span={span}
-            traceStart={trace.startTime}
-            traceDuration={trace.duration}
-            isExpanded={expandedSpans.has(span.spanId)}
-            onToggle={() => toggleSpan(span.spanId)}
-            timelineWidth={timelineWidth}
-            showServiceColors={showServiceColors}
-            showDuration={showDuration}
-            colorizeByLogLevel={colorizeByLogLevel}
-            errorColor={errorColor}
-            warningColor={warningColor}
-            infoColor={infoColor}
-            debugColor={debugColor}
-            showRelatedLogs={showLogsBySpan.has(span.spanId)}
-            onToggleRelatedLogs={() => toggleLogsForSpan(span.spanId)}
-          />
-        ))}
+      <div className={styles.content}>
+        <div className={styles.list} data-testid="trace-span-list">
+          {visibleSpans.length === 0 && (
+            <div className={styles.empty}>
+              <Icon name="search" size="lg" />
+              <div>No spans match the current filters.</div>
+            </div>
+          )}
+
+          {visibleSpans.map((span) => (
+            <SpanRow
+              key={span.spanId}
+              span={span}
+              isExpanded={expandedSpanIds.has(span.spanId)}
+              isActive={focusedSpanId === span.spanId}
+              onToggleExpand={() => toggleExpand(span.spanId)}
+              onFocus={() => setFocusedSpanId(span.spanId)}
+              enableExploreLinks={enableExploreLinks}
+              onOpenExploreSpan={() => {
+                openExplore(`trace_id=\"${trace.traceId}\" span_id=\"${span.spanId}\"`);
+              }}
+              onOpenExploreLog={(log) => {
+                const safeLine = log.line.replace(/\s+/g, ' ').slice(0, 120);
+                openExplore(`trace_id=\"${trace.traceId}\" span_id=\"${span.spanId}\" ${safeLine}`);
+              }}
+            />
+          ))}
+        </div>
       </div>
     </div>
   );
